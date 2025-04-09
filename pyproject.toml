@@ -1,0 +1,56 @@
+[project]
+name = "wexpect-uv"
+# You'll need to determine your current version
+version = "0.1.0"
+description = "Windows alternative of pexpect"
+readme = "README.md"
+requires-python = ">=3.9,<3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Noah Spurrier, Richard Holden, Marco Molteni, Kimberley Burchett, Robert Stone, Hartmut Goebel, Chad Schroeder, Erick Tryzelaar, Dave Kirby, Ids vander Molen, George Todd, Noel Taylor, Nicolas D. Cesar, Alexander Gattin, Geoffrey Marshall, Francisco Lourenco, Glen Mabey, Karthik Gurusamy, Fernando Perez, Corey Minyard, Jon Cohen, Guillaume Chazarain, Andrew Ryan, Nick Craig-Wood, Andrew Stone, Jorgen Grahn, Benedek Racz", email = "betontalpfa@gmail.com"}
+]
+dependencies = [
+    "pywin32>=220",
+    "psutil>=5.0.0",
+    "setuptools==76.0.0",
+]
+keywords = [
+    "scripting", "automation", "expect", "pexpect", "wexpect"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+[project.urls]
+"Source Code" = "https://github.com/raczben/wexpect"
+
+[dependency-groups]
+test = [
+    "coverage",
+    "tox",
+    "codecov",
+    "twine",
+    "pyinstaller==5.6.2",  # A specific version that works
+]
+
+[project.scripts]
+wexpect = "wexpect.__main__:main"
+
+[tool.flake8]
+max-line-length = 100
+ignore = ["E402"]
+
+# If your package is a simple module (py_modules=['wexpect'])
+[tool.hatch.build.targets.wheel]
+packages = ["src/wexpect"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

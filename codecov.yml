@@ -1,4 +1,0 @@
-# Settings for https://codecov.io/gh/raczben/wexpect/
-
-ignore:
-  - tests/*  # ignore folders and all its contents
