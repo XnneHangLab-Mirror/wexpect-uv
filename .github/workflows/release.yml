@@ -1,42 +1,35 @@
 name: Release
-
 on:
   push:
     tags:
       - "v*" # Push events to matching v*, i.e. v1.0, v20.15.10
   workflow_dispatch:
-
 jobs:
   release-build:
-    runs-on: ubuntu-latest
-
+    # 将构建环境更改为 Windows
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-
       - name: Install python
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-
       - name: Install just
         uses: extractions/setup-just@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: build release distributions
         run: |
           just build
-
       - name: upload dists
         uses: actions/upload-artifact@v4
         with:
           name: release-dists
           path: dist/
-
+  # 这两个任务可以保持不变，因为它们只处理已构建的分发包
   publish-pypi:
     runs-on: ubuntu-latest
     name: Publish to PyPI
@@ -45,20 +38,16 @@ jobs:
       - release-build
     permissions:
       id-token: write
-
     steps:
       - name: Retrieve release distributions
         uses: actions/download-artifact@v4
         with:
           name: release-dists
           path: dist/
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-
       - name: Publish release distributions to PyPI
         run: uv publish -v
-
   publish-release:
     runs-on: ubuntu-latest
     name: Publish to GitHub
