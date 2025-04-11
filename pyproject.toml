@@ -1,18 +1,19 @@
 [project]
 name = "wexpect-uv"
-# You'll need to determine your current version
-version = "0.1.0"
-description = "Windows alternative of pexpect"
+version = "0.0.1"
+description = "Windows alternative of pexpect rebuild by uv"
 readme = "README.md"
 requires-python = ">=3.9,<3.12"
 license = {text = "MIT"}
 authors = [
-    {name = "Noah Spurrier, Richard Holden, Marco Molteni, Kimberley Burchett, Robert Stone, Hartmut Goebel, Chad Schroeder, Erick Tryzelaar, Dave Kirby, Ids vander Molen, George Todd, Noel Taylor, Nicolas D. Cesar, Alexander Gattin, Geoffrey Marshall, Francisco Lourenco, Glen Mabey, Karthik Gurusamy, Fernando Perez, Corey Minyard, Jon Cohen, Guillaume Chazarain, Andrew Ryan, Nick Craig-Wood, Andrew Stone, Jorgen Grahn, Benedek Racz", email = "betontalpfa@gmail.com"}
+    {name = "Noah Spurrier, Richard Holden, Marco Molteni, Kimberley Burchett, Robert Stone, Hartmut Goebel, Chad Schroeder, Erick Tryzelaar, Dave Kirby, Ids vander Molen, George Todd, Noel Taylor, Nicolas D. Cesar, Alexander Gattin, Geoffrey Marshall, Francisco Lourenco, Glen Mabey, Karthik Gurusamy, Fernando Perez, Corey Minyard, Jon Cohen, Guillaume Chazarain, Andrew Ryan, Nick Craig-Wood, Andrew Stone, Jorgen Grahn, Benedek Racz", email = "betontalpfa@gmail.com"},
+    {name = "XnneHang", email = "XnneHang@gmail.com"}
 ]
 dependencies = [
     "pywin32>=220",
     "psutil>=5.0.0",
-    "setuptools==76.0.0",
+    "setuptools>=76.0.0",
+    
 ]
 keywords = [
     "scripting", "automation", "expect", "pexpect", "wexpect"
@@ -29,15 +30,12 @@ classifiers = [
 ]
 
 [project.urls]
-"Source Code" = "https://github.com/raczben/wexpect"
+"Source Code" = "https://github.com/XnneHangLab/wexpect-uv"
 
 [dependency-groups]
 test = [
-    "coverage",
-    "tox",
-    "codecov",
-    "twine",
-    "pyinstaller==5.6.2",  # A specific version that works
+    # "coverage",
+    "pyinstaller>=5.6.2",
 ]
 
 [project.scripts]
