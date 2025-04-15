@@ -219,7 +219,7 @@ class ConsoleReaderBase:
 
         if len(s) == 0:
             return 0
-        if s[-1] == '\n':
+        if s[-1] == '\n' or s[-1] == "\r":
             s = s[:-1]
         records = [self.createKeyEvent(c) for c in str(s)]
         if not self.consout:
@@ -358,30 +358,46 @@ class ConsoleReaderBase:
     def readConsoleToCursor(self):
         """Reads from the current read position to the current cursor
         position and inserts the string into self.__buffer."""
-
         if not self.consout:
             return ""
-
+            
         consinfo = self.consout.GetConsoleScreenBufferInfo()
         cursorPos = consinfo['CursorPosition']
 
+        # 添加: 始终读取当前行，即使光标没有移动
+        current_line_start = win32console.PyCOORDType(0, cursorPos.Y)
+        try:
+            current_line_content = self.consout.ReadConsoleOutputCharacter(self.__consSize.X, current_line_start)
+            
+            # 检查当前行内容是否发生变化
+            if not hasattr(self, '_last_line_content'): 
+                self._last_line_content = ""
+            
+            content_changed = current_line_content != self._last_line_content  
+            self._last_line_content = current_line_content
+        except Exception as e:
+            logger.debug(f"Error reading current line: {e}")
+            content_changed = False
+        
         logger.spam('cursor: %r, current: %r' % (cursorPos, self.__currentReadCo))
-
+        
         isSameX = cursorPos.X == self.__currentReadCo.X
         isSameY = cursorPos.Y == self.__currentReadCo.Y
         isSamePos = isSameX and isSameY
-
+        
         logger.spam('isSameY: %r' % isSameY)
         logger.spam('isSamePos: %r' % isSamePos)
-
-        if isSameY or not self.lastReadData.endswith('\r\n'):
+        logger.spam('content_changed: %r' % content_changed)
+        
+        # 如果内容已变化或是其他需要刷新的情况，重置读取位置
+        if content_changed or isSameY or not self.lastReadData.endswith('\r\n'):
             # Read the current slice again
             self.totalRead -= self.lastRead
             self.__currentReadCo.X = 0
             self.__currentReadCo.Y = self.__bufferY
-
+        
         logger.spam('cursor: %r, current: %r' % (cursorPos, self.__currentReadCo))
-
+        
         raw = self.readConsole(self.__currentReadCo, cursorPos)
         rawlist = []
         while raw:
@@ -389,26 +405,30 @@ class ConsoleReaderBase:
             raw = raw[self.__consSize.X:]
         raw = ''.join(rawlist)
         s = self.parseData(raw)
+        
         for i, line in enumerate(reversed(rawlist)):
             if line.endswith(screenbufferfillchar):
                 # Record the Y offset where the most recent line break was detected
                 self.__bufferY += len(rawlist) - i
                 break
-
+        
         logger.spam('lastReadData: %r' % self.lastReadData)
+        
         if s:
             logger.debug('Read: %r' % s)
         else:
             logger.spam('Read: %r' % s)
-
-        if isSamePos and self.lastReadData == s:
-            logger.spam('isSamePos and self.lastReadData == s')
+        
+        # 只有位置相同，内容相同且当前行未变化时才返回空
+        if isSamePos and self.lastReadData == s and not content_changed:
+            logger.spam('isSamePos and self.lastReadData == s and not content_changed')
             s = ''
-
+        
         if s:
             lastReadData = self.lastReadData
             pos = self.getOffset(self.__currentReadCo)
             self.lastReadData = s
+            
             if isSameY or not lastReadData.endswith('\r\n'):
                 # Detect changed lines
                 self.__buffer.seek(pos)
@@ -424,13 +444,18 @@ class ConsoleReaderBase:
                 else:
                     # Cursor has been repositioned
                     s = '\r' + s
+                    
             self.__buffer.seek(pos)
             self.__buffer.truncate()
             self.__buffer.write(raw)
-
+        
         self.__currentReadCo.X = cursorPos.X
         self.__currentReadCo.Y = cursorPos.Y
-
+        
+        # 确保在内容变化时始终返回最新内容
+        if content_changed and not s:
+            s = self.parseData(current_line_content)
+        
         return s
 
     def interact(self):
