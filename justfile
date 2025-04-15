@@ -11,3 +11,6 @@ release:
   git tag "v{{VERSION}}"
   @echo 'Push to GitHub to trigger publish process...'
   git push --tags
+
+fmt-docs:
+  prettier --ignore-path .prettierignore --write '**/*.md'
