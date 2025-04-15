@@ -5,10 +5,11 @@ I fork it from : [**raczben/wexpect**](https://github.com/raczben/wexpect)
 And it is rebuild by uv, for branch [dev](https://github.com/raczben/wexpect/tree/dev).
 
 ## Description
+
 Wexpect is a Windows variant of pexpect.
 
 - [x] v0.0.1: fix the [Always Timeout](https://github.com/raczben/wexpect/issues/42) && [failed in uv](https://github.com/raczben/wexpect/issues/26)
-
+- [x] v0.0.2: fix `cannot read console if endwith '\r' print("",end="\r").` .
 
 ## Installation
 
@@ -48,4 +49,3 @@ uv sync
 ```
 
 Then you can use `uv run wexpect` to use it in command line or `import wexpect` in python. You can modify the code and test then PR to me if you want.
-
