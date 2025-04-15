@@ -1,0 +1,8 @@
+packages/
+node_modules/
+dist/
+build/
+tests/
+.venv/
+models/
+examples/
