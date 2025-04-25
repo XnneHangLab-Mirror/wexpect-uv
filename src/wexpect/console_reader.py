@@ -128,48 +128,47 @@ class ConsoleReaderBase:
                 logger.error(traceback.format_exc())
 
     def read_loop(self):
-
         while True:
             if not self.isalive(self.host_process):
                 logger.info('Host process has been died.')
                 return
-
+                
             try:
                 self.child_exitstatus = self.child_process.wait(0)
                 logger.info(f'Child finished with code: {self.child_exitstatus}')
                 return
             except psutil.TimeoutExpired:
                 pass
-
+                
             consinfo = self.consout.GetConsoleScreenBufferInfo()
             cursorPos = consinfo['CursorPosition']
-
+            
             if cursorPos.Y > maxconsoleY:
-                '''If the console output becomes long, we suspend the child, read all output then
-                clear the console before we resume the child.
-                '''
                 logger.info('cursorPos %s' % cursorPos)
                 self.suspend_child()
                 time.sleep(.2)
-                self.send_to_host(self.readConsoleToCursor())
+                output = self.readConsoleToCursor()
+                self.send_to_host(output)
                 self.refresh_console()
                 self.resume_child()
             else:
-                self.send_to_host(self.readConsoleToCursor())
-
+                # 读取控制台输出并立即发送
+                output = self.readConsoleToCursor()
+                if output:
+                    self.send_to_host(output)
+            
+            # 处理来自主机的输入
             s = self.get_from_host()
             if s:
                 logger.debug(f'get_from_host: {s}')
-            else:
-                logger.spam(f'get_from_host: {s}')
-            if self.enable_signal_chars:
-                for sig, char in SIGNAL_CHARS.items():
-                    if char in s:
-                        self.child_process.send_signal(sig)
-            s = s.decode()
-            self.write(s)
-
-
+                if self.enable_signal_chars:
+                    for sig, char in SIGNAL_CHARS.items():
+                        if char in s:
+                            self.child_process.send_signal(sig)
+                s = s.decode()
+                self.write(s)
+                
+            # 短暂休眠以避免CPU过载
             time.sleep(.02)
 
     def suspend_child(self):
@@ -185,18 +184,17 @@ class ConsoleReaderBase:
     def refresh_console(self):
         """Clears the console after pausing the child and
         reading all the data currently on the console."""
-
         orig = win32console.PyCOORDType(0, 0)
         self.consout.SetConsoleCursorPosition(orig)
         self.__currentReadCo.X = 0
         self.__currentReadCo.Y = 0
         writelen = self.__consSize.X * self.__consSize.Y
         # Use NUL as fill char because it displays as whitespace
-        # (if we interact() with the child)
         self.consout.FillConsoleOutputCharacter(screenbufferfillchar, writelen, orig)
-
         self.__bufferY = 0
         self.__buffer.truncate(0)
+        self.__buffer.seek(0)
+        self.lastReadData = ""  # 重置最后读取的数据
 
     def terminate_child(self):
         try:
@@ -363,100 +361,72 @@ class ConsoleReaderBase:
             
         consinfo = self.consout.GetConsoleScreenBufferInfo()
         cursorPos = consinfo['CursorPosition']
-
-        # 添加: 始终读取当前行，即使光标没有移动
-        current_line_start = win32console.PyCOORDType(0, cursorPos.Y)
-        try:
-            current_line_content = self.consout.ReadConsoleOutputCharacter(self.__consSize.X, current_line_start)
-            
-            # 检查当前行内容是否发生变化
-            if not hasattr(self, '_last_line_content'): 
-                self._last_line_content = ""
-            
-            content_changed = current_line_content != self._last_line_content  
-            self._last_line_content = current_line_content
-        except Exception as e:
-            logger.debug(f"Error reading current line: {e}")
-            content_changed = False
         
-        logger.spam('cursor: %r, current: %r' % (cursorPos, self.__currentReadCo))
+        # 完全重新设计读取逻辑 - 按行读取整个可见区域
+        # 这样可以确保我们不会错过任何行或换行符
+        visible_lines = []
         
-        isSameX = cursorPos.X == self.__currentReadCo.X
-        isSameY = cursorPos.Y == self.__currentReadCo.Y
-        isSamePos = isSameX and isSameY
+        # 从上次读取位置到当前光标位置，逐行读取
+        start_y = self.__currentReadCo.Y
+        end_y = cursorPos.Y
         
-        logger.spam('isSameY: %r' % isSameY)
-        logger.spam('isSamePos: %r' % isSamePos)
-        logger.spam('content_changed: %r' % content_changed)
-        
-        # 如果内容已变化或是其他需要刷新的情况，重置读取位置
-        if content_changed or isSameY or not self.lastReadData.endswith('\r\n'):
-            # Read the current slice again
-            self.totalRead -= self.lastRead
-            self.__currentReadCo.X = 0
-            self.__currentReadCo.Y = self.__bufferY
-        
-        logger.spam('cursor: %r, current: %r' % (cursorPos, self.__currentReadCo))
-        
-        raw = self.readConsole(self.__currentReadCo, cursorPos)
-        rawlist = []
-        while raw:
-            rawlist.append(raw[:self.__consSize.X])
-            raw = raw[self.__consSize.X:]
-        raw = ''.join(rawlist)
-        s = self.parseData(raw)
-        
-        for i, line in enumerate(reversed(rawlist)):
-            if line.endswith(screenbufferfillchar):
-                # Record the Y offset where the most recent line break was detected
-                self.__bufferY += len(rawlist) - i
-                break
-        
-        logger.spam('lastReadData: %r' % self.lastReadData)
-        
-        if s:
-            logger.debug('Read: %r' % s)
+        # 确保我们至少读取当前行
+        if start_y == end_y:
+            line = self._read_complete_line(start_y)
+            if line:
+                visible_lines.append(line)
         else:
-            logger.spam('Read: %r' % s)
+            # 读取从上次位置到当前光标的所有行
+            for y in range(start_y, end_y + 1):
+                line = self._read_complete_line(y)
+                if line:
+                    visible_lines.append(line)
         
-        # 只有位置相同，内容相同且当前行未变化时才返回空
-        if isSamePos and self.lastReadData == s and not content_changed:
-            logger.spam('isSamePos and self.lastReadData == s and not content_changed')
-            s = ''
-        
-        if s:
-            lastReadData = self.lastReadData
-            pos = self.getOffset(self.__currentReadCo)
-            self.lastReadData = s
+        # 将所有行连接起来，确保每行都有换行符
+        if visible_lines:
+            result = '\r\n'.join(visible_lines)
+            # 确保最后一行也有换行符，除非是空行
+            if result and not result.endswith('\r\n'):
+                result += '\r\n'
+                
+            # 更新读取位置
+            self.__currentReadCo.X = cursorPos.X
+            self.__currentReadCo.Y = cursorPos.Y
+            self.__bufferY = cursorPos.Y
             
-            if isSameY or not lastReadData.endswith('\r\n'):
-                # Detect changed lines
-                self.__buffer.seek(pos)
-                buf = self.__buffer.read()
-                if raw.startswith(buf):
-                    # Line has grown
-                    rawslice = raw[len(buf):]
-                    # Update last read bytes so line breaks can be detected in parseData
-                    lastRead = self.lastRead
-                    self.lastRead = len(rawslice)
-                    s = self.parseData(rawslice)
-                    self.lastRead = lastRead
-                else:
-                    # Cursor has been repositioned
-                    s = '\r' + s
-                    
-            self.__buffer.seek(pos)
-            self.__buffer.truncate()
-            self.__buffer.write(raw)
+            # 更新最后读取的数据
+            self.lastReadData = result
+            
+            logger.debug(f'Read multiple lines: {repr(result)}')
+            return result
         
-        self.__currentReadCo.X = cursorPos.X
-        self.__currentReadCo.Y = cursorPos.Y
+        # 如果没有读取到任何内容，尝试读取当前行
+        current_line = self._read_complete_line(cursorPos.Y)
+        if current_line and current_line != self.lastReadData:
+            self.lastReadData = current_line
+            if not current_line.endswith('\r\n'):
+                current_line += '\r\n'
+            return current_line
         
-        # 确保在内容变化时始终返回最新内容
-        if content_changed and not s:
-            s = self.parseData(current_line_content)
-        
-        return s
+        return ""
+
+    def _read_complete_line(self, y):
+        """读取指定行的完整内容，去除填充字符"""
+        try:
+            line_start = win32console.PyCOORDType(0, y)
+            line_content = self.consout.ReadConsoleOutputCharacter(self.__consSize.X, line_start)
+            
+            # 移除行尾的填充字符
+            line_content = line_content.rstrip(screenbufferfillchar)
+            
+            # 如果整行都是填充字符，返回空字符串
+            if not line_content or all(c == screenbufferfillchar for c in line_content):
+                return ""
+                
+            return line_content
+        except Exception as e:
+            logger.debug(f"Error reading line {y}: {e}")
+            return ""
 
     def interact(self):
         """Displays the child console for interaction."""
