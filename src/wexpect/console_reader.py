@@ -50,8 +50,8 @@ class ConsoleReaderBase:
     This class initialize the console starts the child in it and reads the console periodically.
     """
 
-    def __init__(self, path, host_pid, codepage=None, window_size_x=80, window_size_y=25,
-                 buffer_size_x=80, buffer_size_y=16000, local_echo=True, interact=False, **kwargs):
+    def __init__(self, path, host_pid, codepage=None, window_size_x=120, window_size_y=25,
+                 buffer_size_x=120, buffer_size_y=16000, local_echo=True, interact=False, **kwargs):
         """Initialize the console starts the child in it and reads the console periodically.
 
         Args:
@@ -255,7 +255,7 @@ class ConsoleReaderBase:
         evt.RepeatCount = 1
         return evt
 
-    def initConsole(self, consout=None, window_size_x=80, window_size_y=25, buffer_size_x=80,
+    def initConsole(self, consout=None, window_size_x=120, window_size_y=25, buffer_size_x=120,
                     buffer_size_y=16000):
         if not consout:
             consout = self.getConsoleOut()
@@ -355,9 +355,18 @@ class ConsoleReaderBase:
         return ''.join(buff)
 
     def _display_width(self, s):
-        """计算字符串在终端中的显示宽度"""
+        """计算字符串在终端中的显示宽度，处理特殊情况"""
         try:
-            return wcwidth.wcswidth(s)
+            # 处理制表符 - 在大多数终端中宽度为8或4
+            s = s.replace('\t', ' ' * 8)
+            
+            # 处理ANSI转义序列 - 它们不占显示宽度
+            # 简单的正则表达式移除ANSI转义序列
+            import re
+            s_clean = re.sub(r'\x1b\[[\d;]*[a-zA-Z]', '', s)
+            
+            width = wcwidth.wcswidth(s_clean)
+            return width if width >= 0 else len(s_clean)
         except Exception as e:
             logger.error(f"Error calculating width: {e}")
             return len(s)  # 回退到字符计数
@@ -396,16 +405,25 @@ class ConsoleReaderBase:
             # 跳过全填充行
             if not line_content:
                 continue
-                
+
             # 记录调试信息
             display_width = self._display_width(line_content)
             logger.debug(f"Line {i}: content='{line_content}', width={display_width}, buffer_width={buffer_width}")
             
             current_line += line_content
-            
-            # 用显示宽度判断是否wrap
-            if display_width < buffer_width or i == len(lines) - 1:
-                if current_line:  # 确保不添加空行
+
+            is_wrapped_line = False
+
+            # 如果不是最后一行，并且显示宽度接近或等于buffer宽度，认为是包装行
+            if i < len(lines) - 1 and display_width >= buffer_width - 3:
+                is_wrapped_line = True
+                
+            # 检查下一行的开头是否紧接着当前行的结尾
+            if i < len(lines) - 1 and line_content and not lines[i+1].startswith(' '):
+                is_wrapped_line = True
+
+            if not is_wrapped_line or i == len(lines) - 1:
+                if current_line: 
                     logical_lines.append(current_line)
                 current_line = ""
         
