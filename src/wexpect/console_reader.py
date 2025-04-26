@@ -51,7 +51,7 @@ class ConsoleReaderBase:
     """
 
     def __init__(self, path, host_pid, codepage=None, window_size_x=120, window_size_y=25,
-                 buffer_size_x=120, buffer_size_y=16000, local_echo=True, interact=False, **kwargs):
+                 buffer_size_x=120, buffer_size_y=16000, local_echo=True, interact=False, preserve_colors=True, **kwargs):
         """Initialize the console starts the child in it and reads the console periodically.
 
         Args:
@@ -78,6 +78,7 @@ class ConsoleReaderBase:
         self.enable_signal_chars = True
         self.timeout = 30
         self.child_exitstatus = None
+        self.preserve_colors = preserve_colors
 
         logger.info(f'ConsoleReader started. location {os.path.abspath(__file__)}')
 
@@ -129,20 +130,25 @@ class ConsoleReaderBase:
                 logger.error(traceback.format_exc())
 
     def read_loop(self):
+        last_cursor_y = 0
+        
         while True:
             if not self.isalive(self.host_process):
                 logger.info('Host process has been died.')
                 return
-                
+                    
             try:
                 self.child_exitstatus = self.child_process.wait(0)
                 logger.info(f'Child finished with code: {self.child_exitstatus}')
                 return
             except psutil.TimeoutExpired:
                 pass
-                
+                    
             consinfo = self.consout.GetConsoleScreenBufferInfo()
             cursorPos = consinfo['CursorPosition']
+            
+            # 检测光标是否移动或有新内容
+            has_new_content = (cursorPos.Y > last_cursor_y)
             
             if cursorPos.Y > maxconsoleY:
                 logger.info('cursorPos %s' % cursorPos)
@@ -152,11 +158,12 @@ class ConsoleReaderBase:
                 self.send_to_host(output)
                 self.refresh_console()
                 self.resume_child()
-            else:
+            elif has_new_content:
                 # 读取控制台输出并立即发送
                 output = self.readConsoleToCursor()
                 if output:
                     self.send_to_host(output)
+                    last_cursor_y = cursorPos.Y
             
             # 处理来自主机的输入
             s = self.get_from_host()
@@ -170,7 +177,7 @@ class ConsoleReaderBase:
                 self.write(s)
                 
             # 短暂休眠以避免CPU过载
-            time.sleep(.02)
+            time.sleep(.01)  # 减少休眠时间，更频繁地检查
 
     def suspend_child(self):
         """Pauses the main thread of the child process."""
@@ -259,18 +266,27 @@ class ConsoleReaderBase:
                     buffer_size_y=16000):
         if not consout:
             consout = self.getConsoleOut()
-
+        
+        # 启用ANSI处理
+        if self.preserve_colors:
+            # 获取当前控制台模式
+            handle = windll.kernel32.GetStdHandle(win32console.STD_OUTPUT_HANDLE)
+            mode = ctypes.c_ulong()
+            windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+            
+            # 启用ANSI处理 (ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004)
+            windll.kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        
         self.consin = win32console.GetStdHandle(win32console.STD_INPUT_HANDLE)
-
+        
+        # 其余代码保持不变
         rect = win32console.PySMALL_RECTType(0, 0, window_size_x - 1, window_size_y - 1)
         consout.SetConsoleWindowInfo(True, rect)
         size = win32console.PyCOORDType(buffer_size_x, buffer_size_y)
         consout.SetConsoleScreenBufferSize(size)
         pos = win32console.PyCOORDType(0, 0)
-        # Use NUL as fill char because it displays as whitespace
-        # (if we interact() with the child)
         consout.FillConsoleOutputCharacter(screenbufferfillchar, size.X * size.Y, pos)
-
+        
         consinfo = consout.GetConsoleScreenBufferInfo()
         self.__consSize = consinfo['Size']
         logger.info('self.__consSize: ' + str(self.__consSize))
@@ -385,14 +401,19 @@ class ConsoleReaderBase:
         if start_y > end_y:
             return ""
         
+        # 添加调试信息
+        logger.debug(f"Current read position: {self.__currentReadCo.Y}, Cursor position: {cursorPos.Y}")
+        
         buffer_width = self.__consSize.X
         lines = []
         for y in range(start_y, end_y + 1):
             line = self._read_raw_line(y)
             lines.append(line)
+            logger.debug(f"Read line {y}: {repr(line[:20])}...")
         
         # 没有读到任何内容
         if not lines:
+            logger.debug("No lines read")
             return ""
         
         logical_lines = []
@@ -408,24 +429,48 @@ class ConsoleReaderBase:
 
             # 记录调试信息
             display_width = self._display_width(line_content)
-            logger.debug(f"Line {i}: content='{line_content}', width={display_width}, buffer_width={buffer_width}")
+            logger.debug(f"Line {i}: content='{line_content[:20]}...', width={display_width}, buffer_width={buffer_width}")
             
             current_line += line_content
-
             is_wrapped_line = False
-
+            
             # 如果不是最后一行，并且显示宽度接近或等于buffer宽度，认为是包装行
             if i < len(lines) - 1 and display_width >= buffer_width - 3:
                 is_wrapped_line = True
+                logger.debug(f"Line {i} is wrapped (width)")
                 
             # 检查下一行的开头是否紧接着当前行的结尾
             if i < len(lines) - 1 and line_content and not lines[i+1].startswith(' '):
                 is_wrapped_line = True
-
+                logger.debug(f"Line {i} is wrapped (next line)")
+                
             if not is_wrapped_line or i == len(lines) - 1:
                 if current_line: 
                     logical_lines.append(current_line)
+                    logger.debug(f"Added logical line: {repr(current_line[:20])}...")
                 current_line = ""
+        
+        # 处理最后一行
+        if current_line:
+            logical_lines.append(current_line)
+            logger.debug(f"Added last logical line: {repr(current_line[:20])}...")
+        
+        if logical_lines:
+            result = '\r\n'.join(logical_lines)
+            if result and not result.endswith('\r\n'):
+                result += '\r\n'
+            
+            # 更新读取位置
+            self.__currentReadCo.X = cursorPos.X
+            self.__currentReadCo.Y = cursorPos.Y
+            self.__bufferY = cursorPos.Y
+            
+            self.lastReadData = result
+            logger.debug(f'Read {len(logical_lines)} logical lines, total length: {len(result)}')
+            return result
+        
+        logger.debug("No logical lines formed")
+        return ""
         
         # 处理最后一行
         if current_line:
@@ -450,11 +495,106 @@ class ConsoleReaderBase:
     def _read_raw_line(self, y):
         try:
             line_start = win32console.PyCOORDType(0, y)
+            # 读取字符
             line_content = self.consout.ReadConsoleOutputCharacter(self.__consSize.X, line_start)
-            return line_content
+            
+            # 如果需要保留颜色信息
+            if self.preserve_colors:
+                # 读取字符属性
+                line_attrs = self.consout.ReadConsoleOutputAttribute(self.__consSize.X, line_start)
+                
+                # 将字符和属性转换为带有ANSI转义序列的文本
+                ansi_line = self._convert_attrs_to_ansi(line_content, line_attrs)
+                return ansi_line
+            else:
+                return line_content
         except Exception as e:
             logger.debug(f"Error reading line {y}: {e}")
             return ""
+
+    def _win_color_to_ansi(self, color, is_foreground):
+        """将Windows控制台颜色转换为ANSI颜色代码"""
+        # Windows颜色映射到ANSI颜色
+        # 前景色: 30-37 (黑,红,绿,黄,蓝,紫,青,白)
+        # 背景色: 40-47 (黑,红,绿,黄,蓝,紫,青,白)
+        base = 30 if is_foreground else 40
+        
+        # Windows颜色是按位组合的:
+        # 位0: 蓝色
+        # 位1: 绿色
+        # 位2: 红色
+        # 位3: 高亮
+        
+        ansi_color = base
+        if color & 1:  # 蓝色位
+            ansi_color += 4
+        if color & 2:  # 绿色位
+            ansi_color += 2
+        if color & 4:  # 红色位
+            ansi_color += 1
+        
+        # 处理高亮
+        if color & 8:
+            if is_foreground:
+                # 对于前景色，使用90-97代替30-37表示高亮
+                ansi_color += 60
+        
+        return ansi_color
+
+    def _convert_attrs_to_ansi(self, text, attrs):
+        """将字符和属性转换为带有ANSI转义序列的文本"""
+        result = []
+        current_fg = None
+        current_bg = None
+        
+        for i, char in enumerate(text):
+            # 跳过填充字符
+            if char == screenbufferfillchar:
+                result.append(char)
+                continue
+                
+            attr = attrs[i]
+            fg_color = attr & 0x0F  # 前景色（低4位）
+            bg_color = (attr & 0xF0) >> 4  # 背景色（高4位）
+            
+            # 只在颜色变化时添加ANSI序列
+            needs_reset = False
+            needs_fg_change = (current_fg != fg_color and fg_color != 7)  # 7是默认前景色
+            needs_bg_change = (current_bg != bg_color and bg_color != 0)  # 0是默认背景色
+            
+            # 如果需要重置颜色（从有颜色变为默认颜色）
+            if ((current_fg is not None and current_fg != 7 and fg_color == 7) or
+                (current_bg is not None and current_bg != 0 and bg_color == 0)):
+                result.append('\x1b[0m')
+                current_fg = 7
+                current_bg = 0
+                needs_reset = True
+            
+            # 添加前景色
+            if needs_fg_change:
+                ansi_fg = self._win_color_to_ansi(fg_color, True)
+                result.append(f'\x1b[{ansi_fg}m')
+                current_fg = fg_color
+            
+            # 添加背景色
+            if needs_bg_change:
+                ansi_bg = self._win_color_to_ansi(bg_color, False)
+                result.append(f'\x1b[{ansi_bg}m')
+                current_bg = bg_color
+            
+            result.append(char)
+        
+        # 最后重置所有属性
+        if current_fg != 7 or current_bg != 0:
+            result.append('\x1b[0m')
+        
+        return ''.join(result)
+        
+        # 最后重置所有属性
+        if current_attr is not None:
+            result.append('\x1b[0m')
+        
+        return ''.join(result)
 
     def interact(self):
         """Displays the child console for interaction."""
