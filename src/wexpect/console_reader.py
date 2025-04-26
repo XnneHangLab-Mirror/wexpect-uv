@@ -13,6 +13,7 @@ import os
 import traceback
 import psutil
 from io import StringIO
+import wcwidth
 
 import ctypes
 from ctypes import windll
@@ -353,76 +354,85 @@ class ConsoleReaderBase:
 
         return ''.join(buff)
 
+    def _display_width(self, s):
+        """计算字符串在终端中的显示宽度"""
+        try:
+            return wcwidth.wcswidth(s)
+        except Exception as e:
+            logger.error(f"Error calculating width: {e}")
+            return len(s)  # 回退到字符计数
+
     def readConsoleToCursor(self):
-        """Reads from the current read position to the current cursor
-        position and inserts the string into self.__buffer."""
         if not self.consout:
             return ""
-            
         consinfo = self.consout.GetConsoleScreenBufferInfo()
         cursorPos = consinfo['CursorPosition']
-        
-        # 完全重新设计读取逻辑 - 按行读取整个可见区域
-        # 这样可以确保我们不会错过任何行或换行符
-        visible_lines = []
-        
-        # 从上次读取位置到当前光标位置，逐行读取
         start_y = self.__currentReadCo.Y
         end_y = cursorPos.Y
         
-        # 确保我们至少读取当前行
-        if start_y == end_y:
-            line = self._read_complete_line(start_y)
-            if line:
-                visible_lines.append(line)
-        else:
-            # 读取从上次位置到当前光标的所有行
-            for y in range(start_y, end_y + 1):
-                line = self._read_complete_line(y)
-                if line:
-                    visible_lines.append(line)
+        logger.debug(f"Reading console from line {start_y} to {end_y}")
         
-        # 将所有行连接起来，确保每行都有换行符
-        if visible_lines:
-            result = '\r\n'.join(visible_lines)
-            # 确保最后一行也有换行符，除非是空行
+        # 如果没有新行可读，返回空
+        if start_y > end_y:
+            return ""
+        
+        buffer_width = self.__consSize.X
+        lines = []
+        for y in range(start_y, end_y + 1):
+            line = self._read_raw_line(y)
+            lines.append(line)
+        
+        # 没有读到任何内容
+        if not lines:
+            return ""
+        
+        logical_lines = []
+        current_line = ""
+        
+        for i, line in enumerate(lines):
+            # 去除行尾填充
+            line_content = line.rstrip(screenbufferfillchar)
+            
+            # 跳过全填充行
+            if not line_content:
+                continue
+                
+            # 记录调试信息
+            display_width = self._display_width(line_content)
+            logger.debug(f"Line {i}: content='{line_content}', width={display_width}, buffer_width={buffer_width}")
+            
+            current_line += line_content
+            
+            # 用显示宽度判断是否wrap
+            if display_width < buffer_width or i == len(lines) - 1:
+                if current_line:  # 确保不添加空行
+                    logical_lines.append(current_line)
+                current_line = ""
+        
+        # 处理最后一行
+        if current_line:
+            logical_lines.append(current_line)
+        
+        if logical_lines:
+            result = '\r\n'.join(logical_lines)
             if result and not result.endswith('\r\n'):
                 result += '\r\n'
-                
+            
             # 更新读取位置
             self.__currentReadCo.X = cursorPos.X
             self.__currentReadCo.Y = cursorPos.Y
             self.__bufferY = cursorPos.Y
             
-            # 更新最后读取的数据
             self.lastReadData = result
-            
-            logger.debug(f'Read multiple lines: {repr(result)}')
+            logger.debug(f'Read logical lines: {repr(result)}')
             return result
-        
-        # 如果没有读取到任何内容，尝试读取当前行
-        current_line = self._read_complete_line(cursorPos.Y)
-        if current_line and current_line != self.lastReadData:
-            self.lastReadData = current_line
-            if not current_line.endswith('\r\n'):
-                current_line += '\r\n'
-            return current_line
         
         return ""
 
-    def _read_complete_line(self, y):
-        """读取指定行的完整内容，去除填充字符"""
+    def _read_raw_line(self, y):
         try:
             line_start = win32console.PyCOORDType(0, y)
             line_content = self.consout.ReadConsoleOutputCharacter(self.__consSize.X, line_start)
-            
-            # 移除行尾的填充字符
-            line_content = line_content.rstrip(screenbufferfillchar)
-            
-            # 如果整行都是填充字符，返回空字符串
-            if not line_content or all(c == screenbufferfillchar for c in line_content):
-                return ""
-                
             return line_content
         except Exception as e:
             logger.debug(f"Error reading line {y}: {e}")
