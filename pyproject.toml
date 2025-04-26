@@ -13,7 +13,7 @@ dependencies = [
     "pywin32>=220",
     "psutil>=5.0.0",
     "setuptools>=76.0.0",
-    
+    "wcwidth>=0.2.13",
 ]
 keywords = [
     "scripting", "automation", "expect", "pexpect", "wexpect"
