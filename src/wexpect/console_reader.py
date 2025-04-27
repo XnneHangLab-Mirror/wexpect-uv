@@ -29,6 +29,7 @@ from .wexpect_util import init_logger
 from .wexpect_util import EOF_CHAR
 from .wexpect_util import SIGNAL_CHARS
 from .wexpect_util import TIMEOUT
+from .wexpect_util import setup_logger
 
 #
 # System-wide constants
@@ -79,6 +80,7 @@ class ConsoleReaderBase:
         self.timeout = 30
         self.child_exitstatus = None
         self.preserve_colors = preserve_colors
+        logger = setup_logger(level=logging.DEBUG, log_file="./wexpect_log")
 
         logger.info(f'ConsoleReader started. location {os.path.abspath(__file__)}')
 

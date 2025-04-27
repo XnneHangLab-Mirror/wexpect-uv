@@ -62,7 +62,6 @@ def spam(self, message, *args, **kws):  # pragma: no cover
 
 logging.Logger.spam = spam
 
-
 def init_logger(logger=None):  # pragma: no cover
     '''Initializes the logger. I wont measure coverage for this debug method.
     '''
@@ -86,6 +85,58 @@ def init_logger(logger=None):  # pragma: no cover
     except KeyError:
         logger.setLevel(logging.ERROR)
 
+
+def setup_logger(level=logging.DEBUG, log_file=None):
+    """设置wexpect日志，确保日志写入文件。
+    
+    Args:
+        level: 日志级别，默认为DEBUG
+        log_file: 日志文件路径，默认为当前目录下的wexpect_log
+    """
+    import os
+    import logging
+    
+    # 获取logger实例
+    logger = logging.getLogger('wexpect')
+    
+    # 清除现有的处理器
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # 设置日志级别
+    logger.setLevel(level)
+    
+    # 如果没有指定日志文件，使用默认路径
+    if log_file is None:
+        log_file = os.path.join(os.path.abspath("."), "wexpect_log")
+    
+    # 如果日志文件存在，删除它
+    if os.path.exists(log_file):
+        try:
+            os.remove(log_file)
+        except:
+            pass
+    
+    # 创建文件处理器
+    file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
+    file_handler.setLevel(level)
+    
+    # 创建格式化器
+    formatter = logging.Formatter('%(asctime)s - %(filename)s:%(lineno)d - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    
+    # 添加处理器到日志记录器
+    logger.addHandler(file_handler)
+    
+    # 添加一个特殊级别用于非常详细的日志
+    if not hasattr(logging, 'SPAM'):
+        logging.addLevelName(5, "SPAM")
+        def spam(self, message, *args, **kwargs):
+            if self.isEnabledFor(5):
+                self._log(5, message, args, **kwargs)
+        logging.Logger.spam = spam
+    
+    return logger
 
 def split_command_line(command_line, escape_char='^'):
     """This splits a command line into a list of arguments. It splits arguments
