@@ -178,8 +178,8 @@ class ConsoleReaderBase:
                 s = s.decode()
                 self.write(s)
                 
-            # 短暂休眠以避免CPU过载
-            time.sleep(.01)  # 减少休眠时间，更频繁地检查
+            # 增加休眠时间，避免CPU过载和重复读取
+            time.sleep(.05)  # 调整为稍长的休眠时间
 
     def suspend_child(self):
         """Pauses the main thread of the child process."""
@@ -410,7 +410,7 @@ class ConsoleReaderBase:
         lines = []
         for y in range(start_y, end_y + 1):
             line = self._read_raw_line(y)
-            lines.append(line)
+            lines.append((y, line))  # 记录行号和内容，用于去重
             logger.debug(f"Read line {y}: {repr(line[:20])}...")
         
         # 没有读到任何内容
@@ -420,17 +420,26 @@ class ConsoleReaderBase:
         
         logical_lines = []
         current_line = ""
+        seen_lines = set()  # 用于去重，记录已处理的行内容和行号
         
-        for i, line in enumerate(lines):
+        for i, (y, line) in enumerate(lines):
             # 去除行尾填充
             line_content = line.rstrip(screenbufferfillchar).rstrip('\x00')
             
             # 跳过全填充行
             if not line_content:
                 continue
+            
+            # 检查是否已处理过该行内容和行号（去重）
+            line_key = (y, hash(line_content))  # 使用行号和内容哈希作为唯一标识
+            if line_key in seen_lines:
+                logger.debug(f"Skipping duplicate line {y}: {repr(line_content[:20])}...")
+                continue
+            seen_lines.add(line_key)
+            
             # 记录调试信息
             display_width = self._display_width(line_content)
-            logger.debug(f"Line {i}: content='{line_content[:20]}...', width={display_width}, buffer_width={buffer_width}")
+            logger.debug(f"Line {y}: content='{line_content[:20]}...', width={display_width}, buffer_width={buffer_width}")
             
             current_line += line_content
             is_wrapped_line = False
@@ -438,13 +447,8 @@ class ConsoleReaderBase:
             # 仅当不是最后一行，并且显示宽度接近或等于buffer宽度时，认为是包装行
             if i < len(lines) - 1 and display_width >= buffer_width - 5:
                 is_wrapped_line = True
-                logger.debug(f"Line {i} is wrapped (width)")
-                
-            # 不再使用下一行是否以空格开头的条件
-            # if i < len(lines) - 1 and line_content and not lines[i+1].startswith(' '):
-            #     is_wrapped_line = True
-            #     logger.debug(f"Line {i} is wrapped (next line)")
-                
+                logger.debug(f"Line {y} is wrapped (width)")
+            
             if not is_wrapped_line or i == len(lines) - 1:
                 if current_line: 
                     logical_lines.append(current_line)
@@ -461,8 +465,10 @@ class ConsoleReaderBase:
             result = '\r\n'.join(logical_lines)
             # 清理所有 \x00 字符
             result = result.replace('\x00', '')
+            # 强制在结果末尾添加颜色重置序列
+            result += '\x1b[0m'
             
-            # 更新读取位置
+            # 更新读取位置，确保不重复读取
             self.__currentReadCo.X = cursorPos.X
             self.__currentReadCo.Y = cursorPos.Y
             self.__bufferY = cursorPos.Y
