@@ -1,6 +1,6 @@
 [project]
 name = "wexpect-uv"
-version = "0.0.2"
+version = "0.0.3"
 description = "Windows alternative of pexpect rebuild by uv"
 readme = "README.md"
 requires-python = ">=3.9,<3.14"
