@@ -21,18 +21,9 @@ pip install wexpect-uv
 ## Usage
 
 ```python
-import wexpect
+import wexpect as pexpect
 
-prompt = '[A-Z]\:.+>'
-
-child = wexpect.spawn('cmd.exe')
-child.expect(prompt)    # Wait for startup prompt
-
-child.sendline('dir')   # List the current directory
-child.expect(prompt)
-
-print(child.before)     # Print the list
-child.sendline('exit')
+# You can use it like pexpect
 ```
 
 For more information see [examples](https://github.com/XnneHangLab/wexpect-uv) folder.
