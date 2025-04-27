@@ -605,7 +605,7 @@ class ConsoleReaderBase:
 
     def process_color_reset(self,line):
         """
-        处理一行中的颜色代码，确保每个 \x1b[{ansi_fg}m 只对应一个最近的 \x1b[0m，
+        处理一行中的颜色代码，确保每个颜色设置组（连续的 \x1b[{ansi_fg}m）只对应一个最近的 \x1b[0m，
         从后往前移除多余的 \x1b[0m。
         
         参数:
@@ -636,9 +636,25 @@ class ConsoleReaderBase:
                         i = j + 1
                     else:
                         # 如果是颜色起始代码（不是 \x1b[0m）
+                        # 检查是否是颜色组的第一个代码
+                        if i == 0 or result and result[-1] != code and not result[-1].startswith('\x1b['):
+                            open_color_count += 1
                         result.append(code)
-                        open_color_count += 1
                         i = j + 1
+                        # 继续检查下一个是否也是颜色代码，如果是则不增加计数
+                        while i < len(line) and line[i:i+2] == '\x1b[':
+                            j = i
+                            while j < len(line) and line[j] != 'm':
+                                j += 1
+                            if j < len(line) and line[j] == 'm':
+                                next_code = line[i:j+1]
+                                if next_code != color_reset:
+                                    result.append(next_code)
+                                    i = j + 1
+                                else:
+                                    break
+                            else:
+                                break
                 else:
                     # 不是完整的 ANSI 代码，按普通字符处理
                     result.append(line[i])
