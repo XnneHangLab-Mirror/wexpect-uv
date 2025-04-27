@@ -461,12 +461,21 @@ class ConsoleReaderBase:
             logger.debug(f"Added last logical line: {repr(current_line[:20])}...")
         
         if logical_lines:
-            # 在逻辑行之间添加 \r\n
-            result = '\r\n'.join(logical_lines)
+            # 对逻辑行进行去重
+            seen_logical_content = set()
+            unique_logical_lines = []
+            for line in logical_lines:
+                content_hash = hash(line)
+                if content_hash not in seen_logical_content:
+                    unique_logical_lines.append(line)
+                    seen_logical_content.add(content_hash)
+                    logger.debug(f"Added unique logical line to result: {repr(line[:20])}...")
+                else:
+                    logger.debug(f"Skipping duplicate logical line for result: {repr(line[:20])}...")
+
+            result = '\r\n'.join(unique_logical_lines)
             # 清理所有 \x00 字符
             result = result.replace('\x00', '')
-            # 强制在结果末尾添加颜色重置序列
-            result += '\x1b[0m'
             
             # 更新读取位置，确保不重复读取
             self.__currentReadCo.X = cursorPos.X
@@ -474,7 +483,6 @@ class ConsoleReaderBase:
             self.__bufferY = cursorPos.Y
             
             self.lastReadData = result
-            logger.debug(f'Read {len(logical_lines)} logical lines, total length: {len(result)}')
             return result
         
         logger.debug("No logical lines formed")
