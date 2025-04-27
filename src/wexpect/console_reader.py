@@ -526,58 +526,62 @@ class ConsoleReaderBase:
         return ansi_color
 
     def _convert_attrs_to_ansi(self, text, attrs):
-        """将字符和属性转换为带有ANSI转义序列的文本"""
+        """将字符和属性转换为带有ANSI转义序列的文本，考虑显示宽度"""
         result = []
         current_fg = None
         current_bg = None
-        
+        width_index = 0  # 基于显示宽度的索引
+
         for i, char in enumerate(text):
             # 跳过填充字符
             if char == screenbufferfillchar:
                 result.append(char)
                 continue
-                
-            attr = attrs[i]
-            fg_color = attr & 0x0F  # 前景色（低4位）
-            bg_color = (attr & 0xF0) >> 4  # 背景色（高4位）
-            
-            # 只在颜色变化时添加ANSI序列
-            needs_reset = False
-            needs_fg_change = (current_fg != fg_color and fg_color != 7)  # 7是默认前景色
-            needs_bg_change = (current_bg != bg_color and bg_color != 0)  # 0是默认背景色
-            
-            # 如果需要重置颜色（从有颜色变为默认颜色）
-            if ((current_fg is not None and current_fg != 7 and fg_color == 7) or
-                (current_bg is not None and current_bg != 0 and bg_color == 0)):
-                result.append('\x1b[0m')
-                current_fg = 7
-                current_bg = 0
-                needs_reset = True
-            
-            # 添加前景色
-            if needs_fg_change:
-                ansi_fg = self._win_color_to_ansi(fg_color, True)
-                result.append(f'\x1b[{ansi_fg}m')
-                current_fg = fg_color
-            
-            # 添加背景色
-            if needs_bg_change:
-                ansi_bg = self._win_color_to_ansi(bg_color, False)
-                result.append(f'\x1b[{ansi_bg}m')
-                current_bg = bg_color
-            
+
+            # 计算当前字符的显示宽度
+            char_width = wcwidth.wcwidth(char)
+            if char_width < 0:  # 如果无法确定宽度，假设为1
+                char_width = 1
+
+            # 由于一个字符可能对应多个宽度单位，取宽度范围内的第一个属性作为代表
+            # 这里假设 attrs 数组的长度是基于显示宽度的
+            if width_index < len(attrs):
+                attr = attrs[width_index]
+                fg_color = attr & 0x0F  # 前景色（低4位）
+                bg_color = (attr & 0xF0) >> 4  # 背景色（高4位）
+
+                # 只在颜色变化时添加ANSI序列
+                needs_reset = False
+                needs_fg_change = (current_fg != fg_color and fg_color != 7)  # 7是默认前景色
+                needs_bg_change = (current_bg != bg_color and bg_color != 0)  # 0是默认背景色
+
+                # 如果需要重置颜色（从有颜色变为默认颜色）
+                if ((current_fg is not None and current_fg != 7 and fg_color == 7) or
+                    (current_bg is not None and current_bg != 0 and bg_color == 0)):
+                    result.append('\x1b[0m')
+                    current_fg = 7
+                    current_bg = 0
+                    needs_reset = True
+
+                # 添加前景色
+                if needs_fg_change:
+                    ansi_fg = self._win_color_to_ansi(fg_color, True)
+                    result.append(f'\x1b[{ansi_fg}m')
+                    current_fg = fg_color
+
+                # 添加背景色
+                if needs_bg_change:
+                    ansi_bg = self._win_color_to_ansi(bg_color, False)
+                    result.append(f'\x1b[{ansi_bg}m')
+                    current_bg = bg_color
+
             result.append(char)
-        
+            width_index += char_width  # 累积显示宽度
+
         # 最后重置所有属性
         if current_fg != 7 or current_bg != 0:
             result.append('\x1b[0m')
-        
-        return ''.join(result)
-        
-        # 最后重置所有属性
-        if current_attr is not None:
-            result.append('\x1b[0m')
-        
+
         return ''.join(result)
 
     def interact(self):
