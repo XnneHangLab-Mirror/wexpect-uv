@@ -133,6 +133,7 @@ class ConsoleReaderBase:
 
     def read_loop(self):
         last_cursor_y = 0
+        last_line_content = ""  # 新增：记录当前行的内容，用于检测同一行更新
         
         while True:
             if not self.isalive(self.host_process):
@@ -149,14 +150,22 @@ class ConsoleReaderBase:
             consinfo = self.consout.GetConsoleScreenBufferInfo()
             cursorPos = consinfo['CursorPosition']
             
-            # 检测光标是否移动或有新内容
-            has_new_content = (cursorPos.Y > last_cursor_y)
+            # 新增：读取当前行内容，检查是否变化
+            current_line_start = win32console.PyCOORDType(0, cursorPos.Y)
+            try:
+                current_line_content = self.consout.ReadConsoleOutputCharacter(self.__consSize.X, current_line_start)
+            except Exception as e:
+                logger.debug(f"Error reading current line: {e}")
+                current_line_content = last_line_content
+            
+            # 检测光标是否移动或当前行内容是否有更新
+            has_new_content = (cursorPos.Y > last_cursor_y) or (current_line_content != last_line_content)
             
             if cursorPos.Y > maxconsoleY:
                 logger.info('cursorPos %s' % cursorPos)
                 self.suspend_child()
                 time.sleep(.2)
-                output = self.readConsoleToCursor()
+                output = self.readConsoleToCursor() 
                 self.send_to_host(output)
                 self.refresh_console()
                 self.resume_child()
@@ -166,6 +175,7 @@ class ConsoleReaderBase:
                 if output:
                     self.send_to_host(output)
                     last_cursor_y = cursorPos.Y
+                    last_line_content = current_line_content  # 更新记录的当前行内容
             
             # 处理来自主机的输入
             s = self.get_from_host()
