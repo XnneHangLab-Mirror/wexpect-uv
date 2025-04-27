@@ -464,7 +464,9 @@ class ConsoleReaderBase:
             # 对逻辑行进行去重
             seen_logical_content = set()
             unique_logical_lines = []
+            unique_logical_lines_without_use_less_reset_color = []
             for line in logical_lines:
+                # 对逻辑行去重
                 content_hash = hash(line)
                 if content_hash not in seen_logical_content:
                     unique_logical_lines.append(line)
@@ -472,8 +474,15 @@ class ConsoleReaderBase:
                     logger.debug(f"Added unique logical line to result: {repr(line[:20])}...")
                 else:
                     logger.debug(f"Skipping duplicate logical line for result: {repr(line[:20])}...")
+            
+            for line in unique_logical_lines:
+                # 参见 line 600, 我需要在这一行处理所有的颜色字符
+                # 当然，这个的前提是，每个颜色最多都只影响一行，不超过一行。更多的需要在下一行重新写一个颜色开头加颜色重置
+                line = self.process_color_reset(line)
+                unique_logical_lines_without_use_less_reset_color.append(line)
 
-            result = '\r\n'.join(unique_logical_lines)
+
+            result = '\r\n'.join(unique_logical_lines_without_use_less_reset_color)
             # 清理所有 \x00 字符
             result = result.replace('\x00', '')
             
@@ -487,6 +496,53 @@ class ConsoleReaderBase:
         
         logger.debug("No logical lines formed")
         return ""
+
+    def process_color_reset(self,line):
+        """
+        处理一行中的颜色代码，确保每个 \x1b[{ansi_fg}m 只对应一个最近的 \x1b[0m，
+        从后往前移除多余的 \x1b[0m。
+        
+        参数:
+            line (str): 输入的一行字符串，包含 ANSI 颜色代码
+            
+        返回:
+            str: 处理后的字符串
+        """
+        result = []
+        open_color_count = 0
+        i = 0
+        color_reset = '\x1b[0m'
+        
+        while i < len(line):
+            if i + 1 < len(line) and line[i:i+2] == '\x1b[':
+                # 找到一个可能的 ANSI 代码起始
+                j = i
+                while j < len(line) and line[j] != 'm':
+                    j += 1
+                if j < len(line) and line[j] == 'm':
+                    # 完整匹配到一个 ANSI 代码，例如 \x1b[31m 或 \x1b[0m
+                    code = line[i:j+1]
+                    if code == color_reset:
+                        # 如果是重置代码 \x1b[0m
+                        if open_color_count > 0:
+                            result.append(color_reset)
+                            open_color_count -= 1
+                        i = j + 1
+                    else:
+                        # 如果是颜色起始代码（不是 \x1b[0m）
+                        result.append(code)
+                        open_color_count += 1
+                        i = j + 1
+                else:
+                    # 不是完整的 ANSI 代码，按普通字符处理
+                    result.append(line[i])
+                    i += 1
+            else:
+                # 普通字符，直接添加到结果中
+                result.append(line[i])
+                i += 1
+        
+        return ''.join(result)
 
     def _read_raw_line(self, y):
         try:
@@ -593,6 +649,8 @@ class ConsoleReaderBase:
             width_index += char_width  # 累积显示宽度
 
         # 最后重置所有属性
+        # TODO 看起来这个似乎无法直接移除，这个直接移除后，我的颜色添加就达到了一个理想状态，但是我的换行却开始犯病了
+        # 似乎换行和颜色逻辑在某处有耦合但是我没发现，目前最佳做法（保证换行），保证不添加过多字符，那就是得在添加逻辑行时保证每个 `\x1b[0m` 都与对应一个颜色前置否则就移除。
         if current_fg != 7 or current_bg != 0:
             result.append('\x1b[0m')
 
