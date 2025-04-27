@@ -34,7 +34,7 @@ from .wexpect_util import setup_logger
 #
 # System-wide constants
 #
-screenbufferfillchar = '\4'
+screenbufferfillchar = '\0'
 maxconsoleY = 8000
 default_port = 4321
 
@@ -423,12 +423,11 @@ class ConsoleReaderBase:
         
         for i, line in enumerate(lines):
             # 去除行尾填充
-            line_content = line.rstrip(screenbufferfillchar)
+            line_content = line.rstrip(screenbufferfillchar).rstrip('\x00')
             
             # 跳过全填充行
             if not line_content:
                 continue
-
             # 记录调试信息
             display_width = self._display_width(line_content)
             logger.debug(f"Line {i}: content='{line_content[:20]}...', width={display_width}, buffer_width={buffer_width}")
@@ -436,15 +435,15 @@ class ConsoleReaderBase:
             current_line += line_content
             is_wrapped_line = False
             
-            # 如果不是最后一行，并且显示宽度接近或等于buffer宽度，认为是包装行
-            if i < len(lines) - 1 and display_width >= buffer_width - 3:
+            # 仅当不是最后一行，并且显示宽度接近或等于buffer宽度时，认为是包装行
+            if i < len(lines) - 1 and display_width >= buffer_width - 5:
                 is_wrapped_line = True
                 logger.debug(f"Line {i} is wrapped (width)")
                 
-            # 检查下一行的开头是否紧接着当前行的结尾
-            if i < len(lines) - 1 and line_content and not lines[i+1].startswith(' '):
-                is_wrapped_line = True
-                logger.debug(f"Line {i} is wrapped (next line)")
+            # 不再使用下一行是否以空格开头的条件
+            # if i < len(lines) - 1 and line_content and not lines[i+1].startswith(' '):
+            #     is_wrapped_line = True
+            #     logger.debug(f"Line {i} is wrapped (next line)")
                 
             if not is_wrapped_line or i == len(lines) - 1:
                 if current_line: 
@@ -458,9 +457,10 @@ class ConsoleReaderBase:
             logger.debug(f"Added last logical line: {repr(current_line[:20])}...")
         
         if logical_lines:
+            # 在逻辑行之间添加 \r\n
             result = '\r\n'.join(logical_lines)
-            if result and not result.endswith('\r\n'):
-                result += '\r\n'
+            # 清理所有 \x00 字符
+            result = result.replace('\x00', '')
             
             # 更新读取位置
             self.__currentReadCo.X = cursorPos.X
@@ -473,26 +473,6 @@ class ConsoleReaderBase:
         
         logger.debug("No logical lines formed")
         return ""
-        
-        # 处理最后一行
-        if current_line:
-            logical_lines.append(current_line)
-        
-        if logical_lines:
-            result = '\r\n'.join(logical_lines)
-            if result and not result.endswith('\r\n'):
-                result += '\r\n'
-            
-            # 更新读取位置
-            self.__currentReadCo.X = cursorPos.X
-            self.__currentReadCo.Y = cursorPos.Y
-            self.__bufferY = cursorPos.Y
-            
-            self.lastReadData = result
-            logger.debug(f'Read logical lines: {repr(result)}')
-            return result
-        
-        return ""
 
     def _read_raw_line(self, y):
         try:
@@ -500,11 +480,13 @@ class ConsoleReaderBase:
             # 读取字符
             line_content = self.consout.ReadConsoleOutputCharacter(self.__consSize.X, line_start)
             
+            # 去除填充字符和 \x00
+            line_content = line_content.rstrip(screenbufferfillchar).rstrip('\x00')
+            
             # 如果需要保留颜色信息
             if self.preserve_colors:
                 # 读取字符属性
                 line_attrs = self.consout.ReadConsoleOutputAttribute(self.__consSize.X, line_start)
-                
                 # 将字符和属性转换为带有ANSI转义序列的文本
                 ansi_line = self._convert_attrs_to_ansi(line_content, line_attrs)
                 return ansi_line
