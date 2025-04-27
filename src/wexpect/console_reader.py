@@ -29,11 +29,12 @@ from .wexpect_util import init_logger
 from .wexpect_util import EOF_CHAR
 from .wexpect_util import SIGNAL_CHARS
 from .wexpect_util import TIMEOUT
+from .wexpect_util import setup_logger
 
 #
 # System-wide constants
 #
-screenbufferfillchar = '\4'
+screenbufferfillchar = '\0'
 maxconsoleY = 8000
 default_port = 4321
 
@@ -51,7 +52,7 @@ class ConsoleReaderBase:
     """
 
     def __init__(self, path, host_pid, codepage=None, window_size_x=120, window_size_y=25,
-                 buffer_size_x=120, buffer_size_y=16000, local_echo=True, interact=False, **kwargs):
+                 buffer_size_x=120, buffer_size_y=16000, local_echo=True, interact=False, preserve_colors=True, **kwargs):
         """Initialize the console starts the child in it and reads the console periodically.
 
         Args:
@@ -78,6 +79,8 @@ class ConsoleReaderBase:
         self.enable_signal_chars = True
         self.timeout = 30
         self.child_exitstatus = None
+        self.preserve_colors = preserve_colors
+        logger = setup_logger(level=logging.DEBUG, log_file="./wexpect_log")
 
         logger.info(f'ConsoleReader started. location {os.path.abspath(__file__)}')
 
@@ -129,20 +132,25 @@ class ConsoleReaderBase:
                 logger.error(traceback.format_exc())
 
     def read_loop(self):
+        last_cursor_y = 0
+        
         while True:
             if not self.isalive(self.host_process):
                 logger.info('Host process has been died.')
                 return
-                
+                    
             try:
                 self.child_exitstatus = self.child_process.wait(0)
                 logger.info(f'Child finished with code: {self.child_exitstatus}')
                 return
             except psutil.TimeoutExpired:
                 pass
-                
+                    
             consinfo = self.consout.GetConsoleScreenBufferInfo()
             cursorPos = consinfo['CursorPosition']
+            
+            # 检测光标是否移动或有新内容
+            has_new_content = (cursorPos.Y > last_cursor_y)
             
             if cursorPos.Y > maxconsoleY:
                 logger.info('cursorPos %s' % cursorPos)
@@ -152,11 +160,12 @@ class ConsoleReaderBase:
                 self.send_to_host(output)
                 self.refresh_console()
                 self.resume_child()
-            else:
+            elif has_new_content:
                 # 读取控制台输出并立即发送
                 output = self.readConsoleToCursor()
                 if output:
                     self.send_to_host(output)
+                    last_cursor_y = cursorPos.Y
             
             # 处理来自主机的输入
             s = self.get_from_host()
@@ -169,8 +178,8 @@ class ConsoleReaderBase:
                 s = s.decode()
                 self.write(s)
                 
-            # 短暂休眠以避免CPU过载
-            time.sleep(.02)
+            # 增加休眠时间，避免CPU过载和重复读取
+            time.sleep(.05)  # 调整为稍长的休眠时间
 
     def suspend_child(self):
         """Pauses the main thread of the child process."""
@@ -259,18 +268,27 @@ class ConsoleReaderBase:
                     buffer_size_y=16000):
         if not consout:
             consout = self.getConsoleOut()
-
+        
+        # 启用ANSI处理
+        if self.preserve_colors:
+            # 获取当前控制台模式
+            handle = windll.kernel32.GetStdHandle(win32console.STD_OUTPUT_HANDLE)
+            mode = ctypes.c_ulong()
+            windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+            
+            # 启用ANSI处理 (ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004)
+            windll.kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+        
         self.consin = win32console.GetStdHandle(win32console.STD_INPUT_HANDLE)
-
+        
+        # 其余代码保持不变
         rect = win32console.PySMALL_RECTType(0, 0, window_size_x - 1, window_size_y - 1)
         consout.SetConsoleWindowInfo(True, rect)
         size = win32console.PyCOORDType(buffer_size_x, buffer_size_y)
         consout.SetConsoleScreenBufferSize(size)
         pos = win32console.PyCOORDType(0, 0)
-        # Use NUL as fill char because it displays as whitespace
-        # (if we interact() with the child)
         consout.FillConsoleOutputCharacter(screenbufferfillchar, size.X * size.Y, pos)
-
+        
         consinfo = consout.GetConsoleScreenBufferInfo()
         self.__consSize = consinfo['Size']
         logger.info('self.__consSize: ' + str(self.__consSize))
@@ -385,76 +403,258 @@ class ConsoleReaderBase:
         if start_y > end_y:
             return ""
         
+        # 添加调试信息
+        logger.debug(f"Current read position: {self.__currentReadCo.Y}, Cursor position: {cursorPos.Y}")
+        
         buffer_width = self.__consSize.X
         lines = []
         for y in range(start_y, end_y + 1):
             line = self._read_raw_line(y)
-            lines.append(line)
+            lines.append((y, line))  # 记录行号和内容，用于去重
+            logger.debug(f"Read line {y}: {repr(line[:20])}...")
         
         # 没有读到任何内容
         if not lines:
+            logger.debug("No lines read")
             return ""
         
         logical_lines = []
         current_line = ""
+        seen_lines = set()  # 用于去重，记录已处理的行内容和行号
         
-        for i, line in enumerate(lines):
+        for i, (y, line) in enumerate(lines):
             # 去除行尾填充
-            line_content = line.rstrip(screenbufferfillchar)
+            line_content = line.rstrip(screenbufferfillchar).rstrip('\x00')
             
             # 跳过全填充行
             if not line_content:
                 continue
-
+            
+            # 检查是否已处理过该行内容和行号（去重）
+            line_key = (y, hash(line_content))  # 使用行号和内容哈希作为唯一标识
+            if line_key in seen_lines:
+                logger.debug(f"Skipping duplicate line {y}: {repr(line_content[:20])}...")
+                continue
+            seen_lines.add(line_key)
+            
             # 记录调试信息
             display_width = self._display_width(line_content)
-            logger.debug(f"Line {i}: content='{line_content}', width={display_width}, buffer_width={buffer_width}")
+            logger.debug(f"Line {y}: content='{line_content[:20]}...', width={display_width}, buffer_width={buffer_width}")
             
             current_line += line_content
-
             is_wrapped_line = False
-
-            # 如果不是最后一行，并且显示宽度接近或等于buffer宽度，认为是包装行
-            if i < len(lines) - 1 and display_width >= buffer_width - 3:
+            
+            # 仅当不是最后一行，并且显示宽度接近或等于buffer宽度时，认为是包装行
+            if i < len(lines) - 1 and display_width >= buffer_width - 5:
                 is_wrapped_line = True
-                
-            # 检查下一行的开头是否紧接着当前行的结尾
-            if i < len(lines) - 1 and line_content and not lines[i+1].startswith(' '):
-                is_wrapped_line = True
-
+                logger.debug(f"Line {y} is wrapped (width)")
+            
             if not is_wrapped_line or i == len(lines) - 1:
                 if current_line: 
                     logical_lines.append(current_line)
+                    logger.debug(f"Added logical line: {repr(current_line[:20])}...")
                 current_line = ""
         
         # 处理最后一行
         if current_line:
             logical_lines.append(current_line)
+            logger.debug(f"Added last logical line: {repr(current_line[:20])}...")
         
         if logical_lines:
-            result = '\r\n'.join(logical_lines)
-            if result and not result.endswith('\r\n'):
-                result += '\r\n'
+            # 对逻辑行进行去重
+            seen_logical_content = set()
+            unique_logical_lines = []
+            unique_logical_lines_without_use_less_reset_color = []
+            for line in logical_lines:
+                # 对逻辑行去重
+                content_hash = hash(line)
+                if content_hash not in seen_logical_content:
+                    unique_logical_lines.append(line)
+                    seen_logical_content.add(content_hash)
+                    logger.debug(f"Added unique logical line to result: {repr(line[:20])}...")
+                else:
+                    logger.debug(f"Skipping duplicate logical line for result: {repr(line[:20])}...")
             
-            # 更新读取位置
+            for line in unique_logical_lines:
+                # 参见 line 600, 我需要在这一行处理所有的颜色字符
+                # 当然，这个的前提是，每个颜色最多都只影响一行，不超过一行。更多的需要在下一行重新写一个颜色开头加颜色重置
+                line = self.process_color_reset(line)
+                unique_logical_lines_without_use_less_reset_color.append(line)
+
+
+            result = '\r\n'.join(unique_logical_lines_without_use_less_reset_color)
+            # 清理所有 \x00 字符
+            result = result.replace('\x00', '')
+            
+            # 更新读取位置，确保不重复读取
             self.__currentReadCo.X = cursorPos.X
             self.__currentReadCo.Y = cursorPos.Y
             self.__bufferY = cursorPos.Y
             
             self.lastReadData = result
-            logger.debug(f'Read logical lines: {repr(result)}')
             return result
         
+        logger.debug("No logical lines formed")
         return ""
+
+    def process_color_reset(self,line):
+        """
+        处理一行中的颜色代码，确保每个 \x1b[{ansi_fg}m 只对应一个最近的 \x1b[0m，
+        从后往前移除多余的 \x1b[0m。
+        
+        参数:
+            line (str): 输入的一行字符串，包含 ANSI 颜色代码
+            
+        返回:
+            str: 处理后的字符串
+        """
+        result = []
+        open_color_count = 0
+        i = 0
+        color_reset = '\x1b[0m'
+        
+        while i < len(line):
+            if i + 1 < len(line) and line[i:i+2] == '\x1b[':
+                # 找到一个可能的 ANSI 代码起始
+                j = i
+                while j < len(line) and line[j] != 'm':
+                    j += 1
+                if j < len(line) and line[j] == 'm':
+                    # 完整匹配到一个 ANSI 代码，例如 \x1b[31m 或 \x1b[0m
+                    code = line[i:j+1]
+                    if code == color_reset:
+                        # 如果是重置代码 \x1b[0m
+                        if open_color_count > 0:
+                            result.append(color_reset)
+                            open_color_count -= 1
+                        i = j + 1
+                    else:
+                        # 如果是颜色起始代码（不是 \x1b[0m）
+                        result.append(code)
+                        open_color_count += 1
+                        i = j + 1
+                else:
+                    # 不是完整的 ANSI 代码，按普通字符处理
+                    result.append(line[i])
+                    i += 1
+            else:
+                # 普通字符，直接添加到结果中
+                result.append(line[i])
+                i += 1
+        
+        return ''.join(result)
 
     def _read_raw_line(self, y):
         try:
             line_start = win32console.PyCOORDType(0, y)
+            # 读取字符
             line_content = self.consout.ReadConsoleOutputCharacter(self.__consSize.X, line_start)
-            return line_content
+            
+            # 去除填充字符和 \x00
+            line_content = line_content.rstrip(screenbufferfillchar).rstrip('\x00')
+            
+            # 如果需要保留颜色信息
+            if self.preserve_colors:
+                # 读取字符属性
+                line_attrs = self.consout.ReadConsoleOutputAttribute(self.__consSize.X, line_start)
+                # 将字符和属性转换为带有ANSI转义序列的文本
+                ansi_line = self._convert_attrs_to_ansi(line_content, line_attrs)
+                return ansi_line
+            else:
+                return line_content
         except Exception as e:
             logger.debug(f"Error reading line {y}: {e}")
             return ""
+
+    def _win_color_to_ansi(self, color, is_foreground):
+        """将Windows控制台颜色转换为ANSI颜色代码"""
+        # Windows颜色映射到ANSI颜色
+        # 前景色: 30-37 (黑,红,绿,黄,蓝,紫,青,白)
+        # 背景色: 40-47 (黑,红,绿,黄,蓝,紫,青,白)
+        base = 30 if is_foreground else 40
+        
+        # Windows颜色是按位组合的:
+        # 位0: 蓝色
+        # 位1: 绿色
+        # 位2: 红色
+        # 位3: 高亮
+        
+        ansi_color = base
+        if color & 1:  # 蓝色位
+            ansi_color += 4
+        if color & 2:  # 绿色位
+            ansi_color += 2
+        if color & 4:  # 红色位
+            ansi_color += 1
+        
+        # 处理高亮
+        if color & 8:
+            if is_foreground:
+                # 对于前景色，使用90-97代替30-37表示高亮
+                ansi_color += 60
+        
+        return ansi_color
+
+    def _convert_attrs_to_ansi(self, text, attrs):
+        """将字符和属性转换为带有ANSI转义序列的文本，考虑显示宽度"""
+        result = []
+        current_fg = None
+        current_bg = None
+        width_index = 0  # 基于显示宽度的索引
+
+        for i, char in enumerate(text):
+            # 跳过填充字符
+            if char == screenbufferfillchar:
+                result.append(char)
+                continue
+
+            # 计算当前字符的显示宽度
+            char_width = wcwidth.wcwidth(char)
+            if char_width < 0:  # 如果无法确定宽度，假设为1
+                char_width = 1
+
+            # 由于一个字符可能对应多个宽度单位，取宽度范围内的第一个属性作为代表
+            # 这里假设 attrs 数组的长度是基于显示宽度的
+            if width_index < len(attrs):
+                attr = attrs[width_index]
+                fg_color = attr & 0x0F  # 前景色（低4位）
+                bg_color = (attr & 0xF0) >> 4  # 背景色（高4位）
+
+                # 只在颜色变化时添加ANSI序列
+                needs_reset = False
+                needs_fg_change = (current_fg != fg_color and fg_color != 7)  # 7是默认前景色
+                needs_bg_change = (current_bg != bg_color and bg_color != 0)  # 0是默认背景色
+
+                # 如果需要重置颜色（从有颜色变为默认颜色）
+                if ((current_fg is not None and current_fg != 7 and fg_color == 7) or
+                    (current_bg is not None and current_bg != 0 and bg_color == 0)):
+                    result.append('\x1b[0m')
+                    current_fg = 7
+                    current_bg = 0
+                    needs_reset = True
+
+                # 添加前景色
+                if needs_fg_change:
+                    ansi_fg = self._win_color_to_ansi(fg_color, True)
+                    result.append(f'\x1b[{ansi_fg}m')
+                    current_fg = fg_color
+
+                # 添加背景色
+                if needs_bg_change:
+                    ansi_bg = self._win_color_to_ansi(bg_color, False)
+                    result.append(f'\x1b[{ansi_bg}m')
+                    current_bg = bg_color
+
+            result.append(char)
+            width_index += char_width  # 累积显示宽度
+
+        # 最后重置所有属性
+        # TODO 看起来这个似乎无法直接移除，这个直接移除后，我的颜色添加就达到了一个理想状态，但是我的换行却开始犯病了
+        # 似乎换行和颜色逻辑在某处有耦合但是我没发现，目前最佳做法（保证换行），保证不添加过多字符，那就是得在添加逻辑行时保证每个 `\x1b[0m` 都与对应一个颜色前置否则就移除。
+        if current_fg != 7 or current_bg != 0:
+            result.append('\x1b[0m')
+
+        return ''.join(result)
 
     def interact(self):
         """Displays the child console for interaction."""
