@@ -11,6 +11,7 @@ Wexpect is a Windows variant of pexpect.
 - [x] v0.0.1: fix the [Always Timeout](https://github.com/raczben/wexpect/issues/42) && [failed in uv](https://github.com/raczben/wexpect/issues/26)
 - [x] v0.0.2: fix `cannot read console if endwith '\r' print("",end="\r").` .
 - [x] v0.0.3: change the catch logic(catch all even cursor not change) and catch ascii colors.
+- [x] v0.0.4: fix bugs in v0.0.3: remove extra `\x1b[0m`, catch all process-bar protect between `\r`.
 
 ## Installation
 
