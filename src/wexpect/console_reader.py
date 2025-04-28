@@ -133,6 +133,7 @@ class ConsoleReaderBase:
 
     def read_loop(self):
         last_cursor_y = 0
+        last_line_content = ""  # 新增：记录当前行的内容，用于检测同一行更新
         
         while True:
             if not self.isalive(self.host_process):
@@ -149,14 +150,22 @@ class ConsoleReaderBase:
             consinfo = self.consout.GetConsoleScreenBufferInfo()
             cursorPos = consinfo['CursorPosition']
             
-            # 检测光标是否移动或有新内容
-            has_new_content = (cursorPos.Y > last_cursor_y)
+            # 新增：读取当前行内容，检查是否变化
+            current_line_start = win32console.PyCOORDType(0, cursorPos.Y)
+            try:
+                current_line_content = self.consout.ReadConsoleOutputCharacter(self.__consSize.X, current_line_start)
+            except Exception as e:
+                logger.debug(f"Error reading current line: {e}")
+                current_line_content = last_line_content
+            
+            # 检测光标是否移动或当前行内容是否有更新
+            has_new_content = (cursorPos.Y > last_cursor_y) or (current_line_content != last_line_content)
             
             if cursorPos.Y > maxconsoleY:
                 logger.info('cursorPos %s' % cursorPos)
                 self.suspend_child()
                 time.sleep(.2)
-                output = self.readConsoleToCursor()
+                output = self.readConsoleToCursor() 
                 self.send_to_host(output)
                 self.refresh_console()
                 self.resume_child()
@@ -166,6 +175,7 @@ class ConsoleReaderBase:
                 if output:
                     self.send_to_host(output)
                     last_cursor_y = cursorPos.Y
+                    last_line_content = current_line_content  # 更新记录的当前行内容
             
             # 处理来自主机的输入
             s = self.get_from_host()
@@ -430,9 +440,9 @@ class ConsoleReaderBase:
             if not line_content:
                 continue
             
-            # 检查是否已处理过该行内容和行号（去重）
-            line_key = (y, hash(line_content))  # 使用行号和内容哈希作为唯一标识
-            if line_key in seen_lines:
+            # 对于同一行内容，允许更新，不进行严格去重
+            line_key = (y, hash(line_content))
+            if line_key in seen_lines and y != cursorPos.Y:  # 只有非当前行才去重
                 logger.debug(f"Skipping duplicate line {y}: {repr(line_content[:20])}...")
                 continue
             seen_lines.add(line_key)
@@ -461,26 +471,27 @@ class ConsoleReaderBase:
             logger.debug(f"Added last logical line: {repr(current_line[:20])}...")
         
         if logical_lines:
-            # 对逻辑行进行去重
-            seen_logical_content = set()
+            # 修改：对每个逻辑行内部的连续重复内容进行去重
             unique_logical_lines = []
-            unique_logical_lines_without_use_less_reset_color = []
-            for line in logical_lines:
-                # 对逻辑行去重
-                content_hash = hash(line)
-                if content_hash not in seen_logical_content:
-                    unique_logical_lines.append(line)
-                    seen_logical_content.add(content_hash)
-                    logger.debug(f"Added unique logical line to result: {repr(line[:20])}...")
-                else:
-                    logger.debug(f"Skipping duplicate logical line for result: {repr(line[:20])}...")
+            for index,line in enumerate(logical_lines):
+                if not line:
+                    # unique_logical_lines.append(line)
+                    continue
+                
+                deduped_line = self.remove_duplicate_in_logical_line(line)
+                if index == 0:
+                    # 处理第一行，直接添加
+                    unique_logical_lines.append(deduped_line)
+                elif unique_logical_lines[-1] != deduped_line:
+                    unique_logical_lines.append(deduped_line)
+                logger.debug(f"Added deduped logical line to result: {repr(deduped_line[:20])}...")
             
+            unique_logical_lines_without_use_less_reset_color = []
             for line in unique_logical_lines:
                 # 参见 line 600, 我需要在这一行处理所有的颜色字符
                 # 当然，这个的前提是，每个颜色最多都只影响一行，不超过一行。更多的需要在下一行重新写一个颜色开头加颜色重置
                 line = self.process_color_reset(line)
                 unique_logical_lines_without_use_less_reset_color.append(line)
-
 
             result = '\r\n'.join(unique_logical_lines_without_use_less_reset_color)
             # 清理所有 \x00 字符
@@ -496,6 +507,111 @@ class ConsoleReaderBase:
         
         logger.debug("No logical lines formed")
         return ""
+
+    def remove_duplicate_in_logical_line(self,line):
+        """
+        使用二分法或全查找检测并去除一行中的重复内容。
+        假设重复内容是两段完全相同的字符串，中间或两侧有少量不同字符（不超过5个）。
+        对于长度小于10的字符串，直接全查找；对于长度大于或等于10的字符串，使用二分法，最多进行25次检查。
+        
+        参数:
+            line (str): 输入的一行字符串，可能包含重复内容
+            
+        返回:
+            str: 去重后的字符串
+        """
+        if not line:
+            return line
+        
+        logger.debug(f"Processing line for duplicate removal: {repr(line[:20])}...")
+        
+        if len(line) < 10:
+            # 对于短字符串（长度小于10），直接全查找
+            return self.full_search_duplicates(line)
+        else:
+            # 对于较长字符串，使用二分法
+            return self.binary_search_duplicates(line)
+
+    def full_search_duplicates(self,line):
+        """
+        对短字符串（长度小于10）进行全查找，检测并去除重复内容。
+        尝试所有可能的分割点，检查是否存在重复内容。
+        """
+        if not line:
+            return line
+        
+        logger.debug(f"Full search for short line: {repr(line)}")
+        result = line
+        
+        # 尝试所有可能的分割点，检查前半部分和后半部分是否相同
+        for i in range(1, len(line) // 2 + 1):
+            for offset in range(-5, 6):  # 容错偏移量，允许两侧或中间有不超过5个不同字符
+                if i + offset < 0 or i + offset >= len(line):
+                    continue
+                    
+                first_half = line[:i + offset]
+                second_half_start = max(i + offset, i - 5)
+                second_half = line[second_half_start:second_half_start + len(first_half)]
+                
+                if len(second_half) == len(first_half) and first_half == second_half:
+                    # 找到重复内容，去除后半部分
+                    result = line[:second_half_start]
+                    logger.debug(f"Found duplicate in full search at length {i + offset}, removed: {repr(second_half)}")
+                    return result
+        
+        logger.debug(f"No duplicate found in full search for line: {repr(line)}")
+        return result
+
+    def binary_search_duplicates(self,line):
+        """
+        对长字符串（长度大于或等于10）使用二分法检测并去除重复内容。
+        最多进行25次检查。
+        """
+        max_checks = 25  # 最多检查次数
+        check_count = 0
+        result = line
+        
+        # 二分查找重复内容，初始检查长度为行长度的一半
+        low = len(line) // 4  # 最小检查长度，假设重复内容至少占行长度的1/4
+        high = len(line) // 2 + 1  # 最大检查长度，假设重复内容接近行长度的一半
+        found_duplicate = False
+        
+        while low <= high and check_count < max_checks and not found_duplicate:
+            check_count += 1
+            mid = (low + high) // 2  # 当前检查的片段长度
+            
+            # 尝试找到重复片段，考虑中间或两侧可能有少量不同字符
+            for offset in range(-5, 6):  # 容错偏移量，允许两侧或中间有不超过5个不同字符
+                if mid + offset < 0 or mid + offset >= len(line):
+                    continue
+                    
+                # 取前半部分和后半部分进行比较，允许偏移
+                first_half = line[:mid + offset]
+                second_half_start = max(mid + offset, mid - 5)  # 后半部分起始位置，考虑偏移
+                second_half = line[second_half_start:second_half_start + len(first_half)]
+                
+                if len(second_half) == len(first_half) and first_half == second_half:
+                    # 找到重复内容，去除后半部分
+                    result = line[:second_half_start]
+                    logger.debug(f"Found duplicate chunk at length {mid + offset}, removed: {repr(second_half[:20])}...")
+                    found_duplicate = True
+                    break
+            
+            if found_duplicate:
+                break
+                
+            # 如果没找到，调整二分范围
+            if mid * 2 > len(line):
+                high = mid - 1  # 缩短检查长度
+            else:
+                low = mid + 1  # 增加检查长度
+        
+        if not found_duplicate:
+            logger.debug(f"No duplicate found after {check_count} checks for line: {repr(line[:20])}...")
+            pass
+        
+        return result
+
 
     def process_color_reset(self,line):
         """
