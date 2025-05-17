@@ -281,16 +281,16 @@ class ConsoleReaderBase:
         
         # 启用ANSI处理
         if self.preserve_colors:
-            # 获取当前控制台模式
             handle = windll.kernel32.GetStdHandle(win32console.STD_OUTPUT_HANDLE)
             mode = ctypes.c_ulong()
             windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+            windll.kernel32.SetConsoleMode(handle, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
             
-            # 启用ANSI处理 (ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004)
-            windll.kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+            # 设置默认前景色为白色 (7)，背景色为黑色 (0)
+            consout.SetConsoleTextAttribute(7)  # 7 表示白色前景色，黑色背景
         
         self.consin = win32console.GetStdHandle(win32console.STD_INPUT_HANDLE)
-        
+
         # 其余代码保持不变
         rect = win32console.PySMALL_RECTType(0, 0, window_size_x - 1, window_size_y - 1)
         consout.SetConsoleWindowInfo(True, rect)
@@ -613,45 +613,34 @@ class ConsoleReaderBase:
         return result
 
 
-    def process_color_reset(self,line):
-        """
-        处理一行中的颜色代码，确保每个颜色设置组（连续的 \x1b[{ansi_fg}m）只对应一个最近的 \x1b[0m，
-        从后往前移除多余的 \x1b[0m。
-        
-        参数:
-            line (str): 输入的一行字符串，包含 ANSI 颜色代码
-            
-        返回:
-            str: 处理后的字符串
-        """
+    def process_color_reset(self, line):
         result = []
         open_color_count = 0
         i = 0
         color_reset = '\x1b[0m'
         
+        logger.debug(f"Processing line for color reset: {repr(line[:50])}...")
+        
         while i < len(line):
             if i + 1 < len(line) and line[i:i+2] == '\x1b[':
-                # 找到一个可能的 ANSI 代码起始
                 j = i
                 while j < len(line) and line[j] != 'm':
                     j += 1
                 if j < len(line) and line[j] == 'm':
-                    # 完整匹配到一个 ANSI 代码，例如 \x1b[31m 或 \x1b[0m
                     code = line[i:j+1]
+                    logger.debug(f"Found ANSI code: {code}")
                     if code == color_reset:
-                        # 如果是重置代码 \x1b[0m
                         if open_color_count > 0:
                             result.append(color_reset)
                             open_color_count -= 1
+                            logger.debug(f"Applied reset, count: {open_color_count}")
                         i = j + 1
                     else:
-                        # 如果是颜色起始代码（不是 \x1b[0m）
-                        # 检查是否是颜色组的第一个代码
                         if i == 0 or result and result[-1] != code and not result[-1].startswith('\x1b['):
                             open_color_count += 1
+                            logger.debug(f"New color code, count: {open_color_count}")
                         result.append(code)
                         i = j + 1
-                        # 继续检查下一个是否也是颜色代码，如果是则不增加计数
                         while i < len(line) and line[i:i+2] == '\x1b[':
                             j = i
                             while j < len(line) and line[j] != 'm':
@@ -666,14 +655,13 @@ class ConsoleReaderBase:
                             else:
                                 break
                 else:
-                    # 不是完整的 ANSI 代码，按普通字符处理
                     result.append(line[i])
                     i += 1
             else:
-                # 普通字符，直接添加到结果中
                 result.append(line[i])
                 i += 1
         
+        logger.debug(f"Processed line, final open_color_count: {open_color_count}")
         return ''.join(result)
 
     def _read_raw_line(self, y):
@@ -700,9 +688,6 @@ class ConsoleReaderBase:
 
     def _win_color_to_ansi(self, color, is_foreground):
         """将Windows控制台颜色转换为ANSI颜色代码"""
-        # Windows颜色映射到ANSI颜色
-        # 前景色: 30-37 (黑,红,绿,黄,蓝,紫,青,白)
-        # 背景色: 40-47 (黑,红,绿,黄,蓝,紫,青,白)
         base = 30 if is_foreground else 40
         
         # Windows颜色是按位组合的:
@@ -719,10 +704,13 @@ class ConsoleReaderBase:
         if color & 4:  # 红色位
             ansi_color += 1
         
+        # 修复：如果前景色是黑色 (30)，则强制设置为默认白色 (37)
+        if is_foreground and ansi_color == 30:
+            ansi_color = 37
+        
         # 处理高亮
         if color & 8:
             if is_foreground:
-                # 对于前景色，使用90-97代替30-37表示高亮
                 ansi_color += 60
         
         return ansi_color
