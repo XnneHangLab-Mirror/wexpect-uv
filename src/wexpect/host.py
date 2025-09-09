@@ -938,10 +938,10 @@ class SpawnPipe(SpawnBase):
             raise ValueError('I/O operation on closed file in read_nonblocking().')
 
         try:
-            # 核心修改：首先检查是否有可用数据
+            # Core fix: First, check if there is any data available.
             _data, bytes_avail, bytes_left = win32pipe.PeekNamedPipe(self.pipe, 0)
 
-            # 如果没有数据，立即返回空字符串，避免阻塞
+            # If no data is available, return an empty string immediately to prevent blocking.
             if not bytes_avail:
                 return ""
 
