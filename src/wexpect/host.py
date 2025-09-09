@@ -933,38 +933,39 @@ class SpawnPipe(SpawnBase):
         It will not wait for 30 seconds for another 99 characters to come in.
 
         This is a wrapper around Wtty.read(). """
-
         if self.closed:
-            logger.warning('I/O operation on closed file in read_nonblocking().')
+            logging.warning('I/O operation on closed file in read_nonblocking().')
             raise ValueError('I/O operation on closed file in read_nonblocking().')
 
         try:
-            s = win32file.ReadFile(self.pipe, size)[1]
+            # 核心修改：首先检查是否有可用数据
+            _data, bytes_avail, bytes_left = win32pipe.PeekNamedPipe(self.pipe, 0)
 
-            if s:
-                logger.debug(f'Readed: {s}')
+            # 如果没有数据，立即返回空字符串，避免阻塞
+            if not bytes_avail:
+                return ""
+
+            to_read = min(bytes_avail, size)
+            raw = win32file.ReadFile(self.pipe, to_read)[1]
+
+            if raw:
+                logging.debug(f"Readed: {raw}")
             else:
-                logger.spam(f'Readed: {s}')
+                logging.debug(f"Readed: {raw}")
 
-            if EOF_CHAR in s:
+            if EOF_CHAR in raw:
                 self.flag_eof = True
-                logger.info("EOF: EOF character has been arrived")
-                s = s.split(EOF_CHAR)[0]
+                logging.info("EOF: EOF charachter has arrived")
+                raw = raw.split(EOF_CHAR)[0]
 
-            return s.decode()
+            return raw.decode()
+
         except pywintypes.error as e:
-            if e.args[0] == winerror.ERROR_BROKEN_PIPE:   # 109
+            if e.args and e.args[0] in (winerror.ERROR_BROKEN_PIPE, winerror.ERROR_NO_DATA):
                 self.flag_eof = True
-                logger.info("EOF('broken pipe, bye bye')")
-                raise EOF('broken pipe, bye bye')
-            elif e.args[0] == winerror.ERROR_NO_DATA:
-                '''232 (0xE8): The pipe is being closed.
-                '''
-                self.flag_eof = True
-                logger.info("EOF('The pipe is being closed.')")
-                raise EOF('The pipe is being closed.')
-            else:
-                raise
+                logging.info("EOF: pipe closed")
+                raise EOF('broken pipe / pipe closed')
+            raise
 
     def _send_impl(self, s):
         """This sends a string to the child process. This returns the number of
