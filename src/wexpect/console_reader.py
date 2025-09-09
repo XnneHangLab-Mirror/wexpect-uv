@@ -34,7 +34,7 @@ from .wexpect_util import setup_logger
 #
 # System-wide constants
 #
-screenbufferfillchar = '\0'
+screenbufferfillchar = "\0"
 maxconsoleY = 8000
 default_port = 4321
 
@@ -42,7 +42,7 @@ default_port = 4321
 # Create logger: We write logs only to file. Printing out logs are dangerous, because of the deep
 # console manipulation.
 #
-logger = logging.getLogger('wexpect')
+logger = logging.getLogger("wexpect")
 
 
 class ConsoleReaderBase:
@@ -51,8 +51,20 @@ class ConsoleReaderBase:
     This class initialize the console starts the child in it and reads the console periodically.
     """
 
-    def __init__(self, path, host_pid, codepage=None, window_size_x=120, window_size_y=25,
-                 buffer_size_x=120, buffer_size_y=16000, local_echo=True, interact=False, preserve_colors=True, **kwargs):
+    def __init__(
+        self,
+        path,
+        host_pid,
+        codepage=None,
+        window_size_x=120,
+        window_size_y=25,
+        buffer_size_x=120,
+        buffer_size_y=16000,
+        local_echo=True,
+        interact=False,
+        preserve_colors=True,
+        **kwargs,
+    ):
         """Initialize the console starts the child in it and reads the console periodically.
 
         Args:
@@ -82,7 +94,7 @@ class ConsoleReaderBase:
         self.preserve_colors = preserve_colors
         logger = setup_logger(level=logging.DEBUG, log_file="./wexpect_log")
 
-        logger.info(f'ConsoleReader started. location {os.path.abspath(__file__)}')
+        logger.info(f"ConsoleReader started. location {os.path.abspath(__file__)}")
 
         if codepage is None:
             codepage = windll.kernel32.GetACP()
@@ -90,22 +102,21 @@ class ConsoleReaderBase:
         try:
             logger.info("Setting console output code page to %s" % codepage)
             win32console.SetConsoleOutputCP(codepage)
-            logger.info(
-                "Console output code page: %s" % ctypes.windll.kernel32.GetConsoleOutputCP())
-        except Exception as e: # pragma: no cover
+            logger.info("Console output code page: %s" % ctypes.windll.kernel32.GetConsoleOutputCP())
+        except Exception as e:  # pragma: no cover
             # I hope this code is unreachable...
             logger.error(e)
 
         try:
             self.create_connection(**kwargs)
-            logger.info('Spawning %s' % path)
+            logger.info("Spawning %s" % path)
             try:
                 self.initConsole()
                 self.child_process = psutil.Popen(path)
 
-                logger.info(f'Child pid: {self.child_pid}  Console pid: {self.console_pid}')
+                logger.info(f"Child pid: {self.child_pid}  Console pid: {self.console_pid}")
 
-            except Exception: # pragma: no cover
+            except Exception:  # pragma: no cover
                 # I hope this code is unreachable...
                 logger.error(traceback.format_exc())
                 return
@@ -115,41 +126,41 @@ class ConsoleReaderBase:
                 self.interact()
 
             self.read_loop()
-        except Exception: # pragma: no cover
+        except Exception:  # pragma: no cover
             # I hope this code is unreachable...
             logger.error(traceback.format_exc())
         finally:
             try:
                 self.terminate_child()
-                time.sleep(.01)
+                time.sleep(0.01)
                 self.send_to_host(self.readConsoleToCursor())
                 self.sendeof()
-                time.sleep(.1)
+                time.sleep(0.1)
                 self.close_connection()
-                logger.info('Console finished.')
-            except Exception: # pragma: no cover
+                logger.info("Console finished.")
+            except Exception:  # pragma: no cover
                 # I hope this code is unreachable...
                 logger.error(traceback.format_exc())
 
     def read_loop(self):
         last_cursor_y = 0
         last_line_content = ""  # 新增：记录当前行的内容，用于检测同一行更新
-        
+
         while True:
             if not self.isalive(self.host_process):
-                logger.info('Host process has been died.')
+                logger.info("Host process has been died.")
                 return
-                    
+
             try:
                 self.child_exitstatus = self.child_process.wait(0)
-                logger.info(f'Child finished with code: {self.child_exitstatus}')
+                logger.info(f"Child finished with code: {self.child_exitstatus}")
                 return
             except psutil.TimeoutExpired:
                 pass
-                    
+
             consinfo = self.consout.GetConsoleScreenBufferInfo()
-            cursorPos = consinfo['CursorPosition']
-            
+            cursorPos = consinfo["CursorPosition"]
+
             # 新增：读取当前行内容，检查是否变化
             current_line_start = win32console.PyCOORDType(0, cursorPos.Y)
             try:
@@ -157,15 +168,15 @@ class ConsoleReaderBase:
             except Exception as e:
                 logger.debug(f"Error reading current line: {e}")
                 current_line_content = last_line_content
-            
+
             # 检测光标是否移动或当前行内容是否有更新
             has_new_content = (cursorPos.Y > last_cursor_y) or (current_line_content != last_line_content)
-            
+
             if cursorPos.Y > maxconsoleY:
-                logger.info('cursorPos %s' % cursorPos)
+                logger.info("cursorPos %s" % cursorPos)
                 self.suspend_child()
-                time.sleep(.2)
-                output = self.readConsoleToCursor() 
+                time.sleep(0.2)
+                output = self.readConsoleToCursor()
                 self.send_to_host(output)
                 self.refresh_console()
                 self.resume_child()
@@ -176,20 +187,20 @@ class ConsoleReaderBase:
                     self.send_to_host(output)
                     last_cursor_y = cursorPos.Y
                     last_line_content = current_line_content  # 更新记录的当前行内容
-            
+
             # 处理来自主机的输入
             s = self.get_from_host()
             if s:
-                logger.debug(f'get_from_host: {s}')
+                logger.debug(f"get_from_host: {s}")
                 if self.enable_signal_chars:
                     for sig, char in SIGNAL_CHARS.items():
                         if char in s:
                             self.child_process.send_signal(sig)
                 s = s.decode()
                 self.write(s)
-                
+
             # 增加休眠时间，避免CPU过载和重复读取
-            time.sleep(.05)  # 调整为稍长的休眠时间
+            time.sleep(0.05)  # 调整为稍长的休眠时间
 
     def suspend_child(self):
         """Pauses the main thread of the child process."""
@@ -221,7 +232,7 @@ class ConsoleReaderBase:
             if self.child_process:
                 self.child_process.kill()
         except psutil.NoSuchProcess:
-            logger.info('The process has already died.')
+            logger.info("The process has already died.")
         return
 
     def isalive(self, process):
@@ -237,7 +248,7 @@ class ConsoleReaderBase:
 
         if len(s) == 0:
             return 0
-        if s[-1] == '\n' or s[-1] == "\r":
+        if s[-1] == "\n" or s[-1] == "\r":
             s = s[:-1]
         records = [self.createKeyEvent(c) for c in str(s)]
         if not self.consout:
@@ -246,7 +257,7 @@ class ConsoleReaderBase:
         # Store the current cursor position to hide characters in local echo disabled mode
         # (workaround).
         consinfo = self.consout.GetConsoleScreenBufferInfo()
-        startCo = consinfo['CursorPosition']
+        startCo = consinfo["CursorPosition"]
 
         # Send the string to console input
         wrote = self.consin.WriteConsoleInput(records)
@@ -254,9 +265,9 @@ class ConsoleReaderBase:
         # Wait until all input has been recorded by the console.
         ts = time.time()
         while self.consin.PeekConsoleInput(8) != ():
-            if time.time() > ts + len(s) * .1 + .5:
+            if time.time() > ts + len(s) * 0.1 + 0.5:
                 break
-            time.sleep(.05)
+            time.sleep(0.05)
 
         # Hide characters in local echo disabled mode (workaround).
         if not self.local_echo:
@@ -266,7 +277,7 @@ class ConsoleReaderBase:
 
     def createKeyEvent(self, char):
         """Creates a single key record corrosponding to
-            the ascii character char."""
+        the ascii character char."""
 
         evt = win32console.PyINPUT_RECORDType(win32console.KEY_EVENT)
         evt.KeyDown = True
@@ -274,21 +285,20 @@ class ConsoleReaderBase:
         evt.RepeatCount = 1
         return evt
 
-    def initConsole(self, consout=None, window_size_x=120, window_size_y=25, buffer_size_x=120,
-                    buffer_size_y=16000):
+    def initConsole(self, consout=None, window_size_x=120, window_size_y=25, buffer_size_x=120, buffer_size_y=16000):
         if not consout:
             consout = self.getConsoleOut()
-        
+
         # 启用ANSI处理
         if self.preserve_colors:
             handle = windll.kernel32.GetStdHandle(win32console.STD_OUTPUT_HANDLE)
             mode = ctypes.c_ulong()
             windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode))
             windll.kernel32.SetConsoleMode(handle, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
-            
+
             # 设置默认前景色为白色 (7)，背景色为黑色 (0)
             consout.SetConsoleTextAttribute(7)  # 7 表示白色前景色，黑色背景
-        
+
         self.consin = win32console.GetStdHandle(win32console.STD_INPUT_HANDLE)
 
         # 其余代码保持不变
@@ -298,11 +308,11 @@ class ConsoleReaderBase:
         consout.SetConsoleScreenBufferSize(size)
         pos = win32console.PyCOORDType(0, 0)
         consout.FillConsoleOutputCharacter(screenbufferfillchar, size.X * size.Y, pos)
-        
+
         consinfo = consout.GetConsoleScreenBufferInfo()
-        self.__consSize = consinfo['Size']
-        logger.info('self.__consSize: ' + str(self.__consSize))
-        self.startCursorPos = consinfo['CursorPosition']
+        self.__consSize = consinfo["Size"]
+        logger.info("self.__consSize: " + str(self.__consSize))
+        self.startCursorPos = consinfo["CursorPosition"]
 
     def parseData(self, s):
         """Ensures that special characters are interpretted as
@@ -313,22 +323,23 @@ class ConsoleReaderBase:
         for i, c in enumerate(s):
             if c == screenbufferfillchar:
                 if (self.totalRead - self.lastRead + i + 1) % self.__consSize.X == 0:
-                    strlist.append('\r\n')
+                    strlist.append("\r\n")
             else:
                 strlist.append(c)
 
-        s = ''.join(strlist)
+        s = "".join(strlist)
         return s
 
     def getConsoleOut(self):
         consfile = win32file.CreateFile(
-            'CONOUT$',
+            "CONOUT$",
             win32con.GENERIC_READ | win32con.GENERIC_WRITE,
             win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE,
             None,
             win32con.OPEN_EXISTING,
             0,
-            0)
+            0,
+        )
 
         self.consout = win32console.PyConsoleScreenBufferType(consfile)
         return self.consout
@@ -355,7 +366,7 @@ class ConsoleReaderBase:
 
         if endCo is None:
             consinfo = self.consout.GetConsoleScreenBufferInfo()
-            endCo = consinfo['CursorPosition']
+            endCo = consinfo["CursorPosition"]
             endCo = self.getCoord(0 + self.getOffset(endCo))
 
         buff = []
@@ -380,19 +391,20 @@ class ConsoleReaderBase:
 
             startCo = endPoint
 
-        return ''.join(buff)
+        return "".join(buff)
 
     def _display_width(self, s):
         """计算字符串在终端中的显示宽度，处理特殊情况"""
         try:
             # 处理制表符 - 在大多数终端中宽度为8或4
-            s = s.replace('\t', ' ' * 8)
-            
+            s = s.replace("\t", " " * 8)
+
             # 处理ANSI转义序列 - 它们不占显示宽度
             # 简单的正则表达式移除ANSI转义序列
             import re
-            s_clean = re.sub(r'\x1b\[[\d;]*[a-zA-Z]', '', s)
-            
+
+            s_clean = re.sub(r"\x1b\[[\d;]*[a-zA-Z]", "", s)
+
             width = wcwidth.wcswidth(s_clean)
             return width if width >= 0 else len(s_clean)
         except Exception as e:
@@ -403,128 +415,115 @@ class ConsoleReaderBase:
         if not self.consout:
             return ""
         consinfo = self.consout.GetConsoleScreenBufferInfo()
-        cursorPos = consinfo['CursorPosition']
+        cursorPos = consinfo["CursorPosition"]
         start_y = self.__currentReadCo.Y
         end_y = cursorPos.Y
-        
+
         logger.debug(f"Reading console from line {start_y} to {end_y}")
-        
+
         # 如果没有新行可读，返回空
         if start_y > end_y:
             return ""
-        
+
         # 添加调试信息
         logger.debug(f"Current read position: {self.__currentReadCo.Y}, Cursor position: {cursorPos.Y}")
-        
+
         buffer_width = self.__consSize.X
         lines = []
         for y in range(start_y, end_y + 1):
             line = self._read_raw_line(y)
             lines.append((y, line))  # 记录行号和内容，用于去重
             logger.debug(f"Read line {y}: {repr(line[:20])}...")
-        
+
         # 没有读到任何内容
         if not lines:
             logger.debug("No lines read")
             return ""
-        
+
         logical_lines = []
         current_line = ""
         seen_lines = set()  # 用于去重，记录已处理的行内容和行号
-        
+
         for i, (y, line) in enumerate(lines):
             # 去除行尾填充
-            line_content = line.rstrip(screenbufferfillchar).rstrip('\x00')
-            
+            line_content = line.rstrip(screenbufferfillchar).rstrip("\x00").rstrip()
+
             # 跳过全填充行
             if not line_content:
                 continue
-            
+
             # 对于同一行内容，允许更新，不进行严格去重
             line_key = (y, hash(line_content))
             if line_key in seen_lines and y != cursorPos.Y:  # 只有非当前行才去重
                 logger.debug(f"Skipping duplicate line {y}: {repr(line_content[:20])}...")
                 continue
             seen_lines.add(line_key)
-            
+
             # 记录调试信息
             display_width = self._display_width(line_content)
-            logger.debug(f"Line {y}: content='{line_content[:20]}...', width={display_width}, buffer_width={buffer_width}")
-            
+            logger.debug(
+                f"Line {y}: content='{line_content[:20]}...', width={display_width}, buffer_width={buffer_width}"
+            )
+
             current_line += line_content
             is_wrapped_line = False
-            
+
             # 仅当不是最后一行，并且显示宽度接近或等于buffer宽度时，认为是包装行
             if i < len(lines) - 1 and display_width >= buffer_width - 5:
                 is_wrapped_line = True
                 logger.debug(f"Line {y} is wrapped (width)")
-            
+
             if not is_wrapped_line or i == len(lines) - 1:
-                if current_line: 
+                if current_line:
                     logical_lines.append(current_line)
                     logger.debug(f"Added logical line: {repr(current_line[:20])}...")
                 current_line = ""
-        
+
         # 处理最后一行
         if current_line:
             logical_lines.append(current_line)
             logger.debug(f"Added last logical line: {repr(current_line[:20])}...")
-        
+
         if logical_lines:
-            # 修改：对每个逻辑行内部的连续重复内容进行去重
-            unique_logical_lines = []
-            for index,line in enumerate(logical_lines):
-                if not line:
-                    # unique_logical_lines.append(line)
-                    continue
-                
-                deduped_line = self.remove_duplicate_in_logical_line(line)
-                if index == 0:
-                    # 处理第一行，直接添加
-                    unique_logical_lines.append(deduped_line)
-                elif unique_logical_lines[-1] != deduped_line:
-                    unique_logical_lines.append(deduped_line)
-                logger.debug(f"Added deduped logical line to result: {repr(deduped_line[:20])}...")
-            
             unique_logical_lines_without_use_less_reset_color = []
-            for line in unique_logical_lines:
+            for line in logical_lines:
                 # 参见 line 600, 我需要在这一行处理所有的颜色字符
                 # 当然，这个的前提是，每个颜色最多都只影响一行，不超过一行。更多的需要在下一行重新写一个颜色开头加颜色重置
                 line = self.process_color_reset(line)
                 unique_logical_lines_without_use_less_reset_color.append(line)
 
-            result = '\r\n'.join(unique_logical_lines_without_use_less_reset_color)
+            result = "\r\n".join(unique_logical_lines_without_use_less_reset_color)
             # 清理所有 \x00 字符
-            result = result.replace('\x00', '')
-            
+            result = result.replace("\x00", "")
+
             # 更新读取位置，确保不重复读取
             self.__currentReadCo.X = cursorPos.X
             self.__currentReadCo.Y = cursorPos.Y
             self.__bufferY = cursorPos.Y
-            
+
             self.lastReadData = result
             return result
-        
+
         logger.debug("No logical lines formed")
         return ""
 
-    def remove_duplicate_in_logical_line(self,line):
+    def remove_duplicate_in_logical_line(self, line):
         """
         使用二分法或全查找检测并去除一行中的重复内容。
         假设重复内容是两段完全相同的字符串，中间或两侧有少量不同字符（不超过5个）。
         对于长度小于10的字符串，直接全查找；对于长度大于或等于10的字符串，使用二分法，最多进行25次检查。
-        
+
         参数:
             line (str): 输入的一行字符串，可能包含重复内容
-            
+
         返回:
             str: 去重后的字符串
         """
         if not line:
             return line
-        
+
         logger.debug(f"Processing line for duplicate removal: {repr(line[:20])}...")
-        
+
         if len(line) < 10:
             # 对于短字符串（长度小于10），直接全查找
             return self.full_search_duplicates(line)
@@ -532,37 +531,37 @@ class ConsoleReaderBase:
             # 对于较长字符串，使用二分法
             return self.binary_search_duplicates(line)
 
-    def full_search_duplicates(self,line):
+    def full_search_duplicates(self, line):
         """
         对短字符串（长度小于10）进行全查找，检测并去除重复内容。
         尝试所有可能的分割点，检查是否存在重复内容。
         """
         if not line:
             return line
-        
+
         logger.debug(f"Full search for short line: {repr(line)}")
         result = line
-        
+
         # 尝试所有可能的分割点，检查前半部分和后半部分是否相同
         for i in range(1, len(line) // 2 + 1):
             for offset in range(-5, 6):  # 容错偏移量，允许两侧或中间有不超过5个不同字符
                 if i + offset < 0 or i + offset >= len(line):
                     continue
-                    
-                first_half = line[:i + offset]
+
+                first_half = line[: i + offset]
                 second_half_start = max(i + offset, i - 5)
-                second_half = line[second_half_start:second_half_start + len(first_half)]
-                
+                second_half = line[second_half_start : second_half_start + len(first_half)]
+
                 if len(second_half) == len(first_half) and first_half == second_half:
                     # 找到重复内容，去除后半部分
                     result = line[:second_half_start]
                     logger.debug(f"Found duplicate in full search at length {i + offset}, removed: {repr(second_half)}")
                     return result
-        
+
         logger.debug(f"No duplicate found in full search for line: {repr(line)}")
         return result
 
-    def binary_search_duplicates(self,line):
+    def binary_search_duplicates(self, line):
         """
         对长字符串（长度大于或等于10）使用二分法检测并去除重复内容。
         最多进行25次检查。
@@ -570,64 +569,65 @@ class ConsoleReaderBase:
         max_checks = 25  # 最多检查次数
         check_count = 0
         result = line
-        
+
         # 二分查找重复内容，初始检查长度为行长度的一半
         low = len(line) // 4  # 最小检查长度，假设重复内容至少占行长度的1/4
         high = len(line) // 2 + 1  # 最大检查长度，假设重复内容接近行长度的一半
         found_duplicate = False
-        
+
         while low <= high and check_count < max_checks and not found_duplicate:
             check_count += 1
             mid = (low + high) // 2  # 当前检查的片段长度
-            
+
             # 尝试找到重复片段，考虑中间或两侧可能有少量不同字符
             for offset in range(-5, 6):  # 容错偏移量，允许两侧或中间有不超过5个不同字符
                 if mid + offset < 0 or mid + offset >= len(line):
                     continue
-                    
+
                 # 取前半部分和后半部分进行比较，允许偏移
-                first_half = line[:mid + offset]
+                first_half = line[: mid + offset]
                 second_half_start = max(mid + offset, mid - 5)  # 后半部分起始位置，考虑偏移
-                second_half = line[second_half_start:second_half_start + len(first_half)]
-                
+                second_half = line[second_half_start : second_half_start + len(first_half)]
+
                 if len(second_half) == len(first_half) and first_half == second_half:
                     # 找到重复内容，去除后半部分
                     result = line[:second_half_start]
-                    logger.debug(f"Found duplicate chunk at length {mid + offset}, removed: {repr(second_half[:20])}...")
+                    logger.debug(
+                        f"Found duplicate chunk at length {mid + offset}, removed: {repr(second_half[:20])}..."
+                    )
                     found_duplicate = True
                     break
-            
+
             if found_duplicate:
                 break
-                
+
             # 如果没找到，调整二分范围
             if mid * 2 > len(line):
                 high = mid - 1  # 缩短检查长度
             else:
                 low = mid + 1  # 增加检查长度
-        
+
         if not found_duplicate:
             logger.debug(f"No duplicate found after {check_count} checks for line: {repr(line[:20])}...")
             pass
-        
-        return result
 
+        return result
 
     def process_color_reset(self, line):
         result = []
         open_color_count = 0
         i = 0
-        color_reset = '\x1b[0m'
-        
+        color_reset = "\x1b[0m"
+
         logger.debug(f"Processing line for color reset: {repr(line[:50])}...")
-        
+
         while i < len(line):
-            if i + 1 < len(line) and line[i:i+2] == '\x1b[':
+            if i + 1 < len(line) and line[i : i + 2] == "\x1b[":
                 j = i
-                while j < len(line) and line[j] != 'm':
+                while j < len(line) and line[j] != "m":
                     j += 1
-                if j < len(line) and line[j] == 'm':
-                    code = line[i:j+1]
+                if j < len(line) and line[j] == "m":
+                    code = line[i : j + 1]
                     logger.debug(f"Found ANSI code: {code}")
                     if code == color_reset:
                         if open_color_count > 0:
@@ -636,17 +636,17 @@ class ConsoleReaderBase:
                             logger.debug(f"Applied reset, count: {open_color_count}")
                         i = j + 1
                     else:
-                        if i == 0 or result and result[-1] != code and not result[-1].startswith('\x1b['):
+                        if i == 0 or result and result[-1] != code and not result[-1].startswith("\x1b["):
                             open_color_count += 1
                             logger.debug(f"New color code, count: {open_color_count}")
                         result.append(code)
                         i = j + 1
-                        while i < len(line) and line[i:i+2] == '\x1b[':
+                        while i < len(line) and line[i : i + 2] == "\x1b[":
                             j = i
-                            while j < len(line) and line[j] != 'm':
+                            while j < len(line) and line[j] != "m":
                                 j += 1
-                            if j < len(line) and line[j] == 'm':
-                                next_code = line[i:j+1]
+                            if j < len(line) and line[j] == "m":
+                                next_code = line[i : j + 1]
                                 if next_code != color_reset:
                                     result.append(next_code)
                                     i = j + 1
@@ -660,19 +660,19 @@ class ConsoleReaderBase:
             else:
                 result.append(line[i])
                 i += 1
-        
+
         logger.debug(f"Processed line, final open_color_count: {open_color_count}")
-        return ''.join(result)
+        return "".join(result)
 
     def _read_raw_line(self, y):
         try:
             line_start = win32console.PyCOORDType(0, y)
             # 读取字符
             line_content = self.consout.ReadConsoleOutputCharacter(self.__consSize.X, line_start)
-            
+
             # 去除填充字符和 \x00
-            line_content = line_content.rstrip(screenbufferfillchar).rstrip('\x00')
-            
+            line_content = line_content.rstrip(screenbufferfillchar).rstrip("\x00")
+
             # 如果需要保留颜色信息
             if self.preserve_colors:
                 # 读取字符属性
@@ -689,13 +689,13 @@ class ConsoleReaderBase:
     def _win_color_to_ansi(self, color, is_foreground):
         """将Windows控制台颜色转换为ANSI颜色代码"""
         base = 30 if is_foreground else 40
-        
+
         # Windows颜色是按位组合的:
         # 位0: 蓝色
         # 位1: 绿色
         # 位2: 红色
         # 位3: 高亮
-        
+
         ansi_color = base
         if color & 1:  # 蓝色位
             ansi_color += 4
@@ -703,16 +703,16 @@ class ConsoleReaderBase:
             ansi_color += 2
         if color & 4:  # 红色位
             ansi_color += 1
-        
+
         # 修复：如果前景色是黑色 (30)，则强制设置为默认白色 (37)
         if is_foreground and ansi_color == 30:
             ansi_color = 37
-        
+
         # 处理高亮
         if color & 8:
             if is_foreground:
                 ansi_color += 60
-        
+
         return ansi_color
 
     def _convert_attrs_to_ansi(self, text, attrs):
@@ -742,13 +742,14 @@ class ConsoleReaderBase:
 
                 # 只在颜色变化时添加ANSI序列
                 needs_reset = False
-                needs_fg_change = (current_fg != fg_color and fg_color != 7)  # 7是默认前景色
-                needs_bg_change = (current_bg != bg_color and bg_color != 0)  # 0是默认背景色
+                needs_fg_change = current_fg != fg_color and fg_color != 7  # 7是默认前景色
+                needs_bg_change = current_bg != bg_color and bg_color != 0  # 0是默认背景色
 
                 # 如果需要重置颜色（从有颜色变为默认颜色）
-                if ((current_fg is not None and current_fg != 7 and fg_color == 7) or
-                    (current_bg is not None and current_bg != 0 and bg_color == 0)):
-                    result.append('\x1b[0m')
+                if (current_fg is not None and current_fg != 7 and fg_color == 7) or (
+                    current_bg is not None and current_bg != 0 and bg_color == 0
+                ):
+                    result.append("\x1b[0m")
                     current_fg = 7
                     current_bg = 0
                     needs_reset = True
@@ -756,13 +757,13 @@ class ConsoleReaderBase:
                 # 添加前景色
                 if needs_fg_change:
                     ansi_fg = self._win_color_to_ansi(fg_color, True)
-                    result.append(f'\x1b[{ansi_fg}m')
+                    result.append(f"\x1b[{ansi_fg}m")
                     current_fg = fg_color
 
                 # 添加背景色
                 if needs_bg_change:
                     ansi_bg = self._win_color_to_ansi(bg_color, False)
-                    result.append(f'\x1b[{ansi_bg}m')
+                    result.append(f"\x1b[{ansi_bg}m")
                     current_bg = bg_color
 
             result.append(char)
@@ -772,14 +773,14 @@ class ConsoleReaderBase:
         # TODO 看起来这个似乎无法直接移除，这个直接移除后，我的颜色添加就达到了一个理想状态，但是我的换行却开始犯病了
         # 似乎换行和颜色逻辑在某处有耦合但是我没发现，目前最佳做法（保证换行），保证不添加过多字符，那就是得在添加逻辑行时保证每个 `\x1b[0m` 都与对应一个颜色前置否则就移除。
         if current_fg != 7 or current_bg != 0:
-            result.append('\x1b[0m')
+            result.append("\x1b[0m")
 
-        return ''.join(result)
+        return "".join(result)
 
     def interact(self):
         """Displays the child console for interaction."""
 
-        logger.debug('Start interact window')
+        logger.debug("Start interact window")
         win32gui.ShowWindow(win32console.GetConsoleWindow(), win32con.SW_SHOW)
 
     def sendeof(self):
@@ -791,22 +792,21 @@ class ConsoleReaderBase:
 
 
 class ConsoleReaderSocket(ConsoleReaderBase):
-
     def create_connection(self, **kwargs):
         try:
-            self.port = kwargs['port']
+            self.port = kwargs["port"]
             # Create a TCP/IP socket
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server_address = ('localhost', self.port)
+            server_address = ("localhost", self.port)
             self.sock.bind(server_address)
-            logger.info(f'Socket started at port: {self.port}')
+            logger.info(f"Socket started at port: {self.port}")
 
             # Listen for incoming connections
             self.sock.settimeout(5)
             self.sock.listen(1)
             self.connection, client_address = self.sock.accept()
-            self.connection.settimeout(.01)
-            logger.info(f'Client connected: {client_address}')
+            self.connection.settimeout(0.01)
+            logger.info(f"Client connected: {client_address}")
         except Exception as e:  # pragma: no cover
             # I hope this code is unreachable.
             logger.error(f"Port: {self.port} {e}")
@@ -823,9 +823,9 @@ class ConsoleReaderSocket(ConsoleReaderBase):
         if isinstance(msg, str):
             msg = str.encode(msg)
         if msg:
-            logger.debug(f'Sending msg: {msg}')
+            logger.debug(f"Sending msg: {msg}")
         else:
-            logger.spam(f'Sending msg: {msg}')
+            logger.spam(f"Sending msg: {msg}")
         self.connection.sendall(msg)
 
     def get_from_host(self):
@@ -835,14 +835,14 @@ class ConsoleReaderSocket(ConsoleReaderBase):
             err = e.args[0]
             # this next if/else is a bit redundant, but illustrates how the
             # timeout exception is setup
-            if err == 'timed out':
-                logger.debug('recv timed out, retry later')
-                return b''
+            if err == "timed out":
+                logger.debug("recv timed out, retry later")
+                return b""
             else:
                 raise
         else:
             if len(msg) == 0:
-                raise Exception('orderly shutdown on server end')
+                raise Exception("orderly shutdown on server end")
             else:
                 # got a message do something :)
                 return msg
@@ -853,33 +853,38 @@ class ConsoleReaderPipe(ConsoleReaderBase):
         if timeout == -1:
             timeout = self.timeout
         if timeout is None:
-            end_time = float('inf')
+            end_time = float("inf")
         else:
             end_time = time.time() + timeout
 
         try:
-            self.pipe_name = kwargs['pipe_file_name']
+            self.pipe_name = kwargs["pipe_file_name"]
         except KeyError:
-            self.pipe_name = 'wexpect_{}'.format(self.console_pid)
+            self.pipe_name = "wexpect_{}".format(self.console_pid)
 
-        pipe_full_path = r'\\.\pipe\{}'.format(self.pipe_name)
-        logger.info('Start pipe server: %s', pipe_full_path)
+        pipe_full_path = r"\\.\pipe\{}".format(self.pipe_name)
+        logger.info("Start pipe server: %s", pipe_full_path)
         self.pipe = win32pipe.CreateNamedPipe(
             pipe_full_path,
             win32pipe.PIPE_ACCESS_DUPLEX,
             win32pipe.PIPE_TYPE_MESSAGE | win32pipe.PIPE_READMODE_MESSAGE | win32pipe.PIPE_NOWAIT,
-            1, 65536, 65536, 10000, None)
+            1,
+            65536,
+            65536,
+            10000,
+            None,
+        )
         logger.info("waiting for client")
         while True:
             if end_time < time.time():
-                raise TIMEOUT('Connect to child has been timed out.')
+                raise TIMEOUT("Connect to child has been timed out.")
             try:
                 win32pipe.ConnectNamedPipe(self.pipe, None)
                 break
             except Exception as e:
                 logger.debug(e)
                 time.sleep(0.2)
-        logger.info('got client')
+        logger.info("got client")
 
     def close_connection(self):
         if self.pipe:
@@ -890,17 +895,17 @@ class ConsoleReaderPipe(ConsoleReaderBase):
         if isinstance(msg, str):
             msg = str.encode(msg)
         if msg:
-            logger.debug(f'Sending msg: {msg}')
+            logger.debug(f"Sending msg: {msg}")
         else:
-            logger.spam(f'Sending msg: {msg}')
+            logger.spam(f"Sending msg: {msg}")
         win32file.WriteFile(self.pipe, msg)
 
     def get_from_host(self):
         data, avail, bytes_left = win32pipe.PeekNamedPipe(self.pipe, 4096)
-        logger.spam(f'data: {data}  avail:{avail}  bytes_left{bytes_left}')
+        logger.spam(f"data: {data}  avail:{avail}  bytes_left{bytes_left}")
         if avail > 0:
             resp = win32file.ReadFile(self.pipe, 4096)
             ret = resp[1]
             return ret
         else:
-            return b''
+            return b""
