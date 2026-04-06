@@ -1,7 +1,8 @@
 # __init__.py
 
 import os
-import pkg_resources
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as importlib_version
 
 try:
     spawn_class_name = os.environ['WEXPECT_SPAWN_CLASS']
@@ -48,10 +49,10 @@ else:
         print(f'Error: no spawn class: {spawn_class_name}')
         raise
 
-    # The version is handled by the package: pbr, which derives the version from the git tags.
+    # Resolve installed package version without pkg_resources.
     try:
-        __version__ = pkg_resources.require("wexpect")[0].version
-    except Exception:     # pragma: no cover
+        __version__ = importlib_version("wexpect-uv")
+    except PackageNotFoundError:     # pragma: no cover
         __version__ = '0.0.1.unkowndev0'
 
     __all__ = ['ExceptionPexpect', 'EOF', 'TIMEOUT', 'ConsoleReaderSocket', 'ConsoleReaderPipe',
