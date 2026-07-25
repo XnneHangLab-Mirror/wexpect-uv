@@ -51,7 +51,8 @@ import shutil
 import types
 import traceback
 import signal
-import pkg_resources
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as importlib_version
 from io import StringIO
 
 try:
@@ -73,10 +74,10 @@ except ImportError as e: # pragma: no cover
 screenbufferfillchar = '\4'
 maxconsoleY = 8000
 
-# The version is handled by the package: pbr, which derives the version from the git tags.
+# Resolve installed package version without pkg_resources.
 try:
-    __version__ = pkg_resources.require("wexpect")[0].version
-except: # pragma: no cover
+    __version__ = importlib_version("wexpect-uv")
+except PackageNotFoundError: # pragma: no cover
     __version__ = '0.0.1.unkowndev0'
 
 __all__ = ['ExceptionPexpect', 'EOF', 'TIMEOUT', 'spawn', 'run', 'which',
