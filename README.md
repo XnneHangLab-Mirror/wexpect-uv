@@ -13,6 +13,7 @@ Wexpect is a Windows variant of pexpect.
 - [x] v0.0.3: change the catch logic(catch all even cursor not change) and catch ascii colors.
 - [x] v0.0.4: fix bugs in v0.0.3: remove extra `\x1b[0m`, catch all process-bar protect between `\r`.
 - [x] v0.0.5: fix default front-color in windows 10.
+- [x] v0.0.7: remove pkg_resources dependency for Python 3.13 compatibility.
 
 ## Installation
 
